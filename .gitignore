@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+venv/
+*.db
+.env
+server/token.json
+server/credentials.json
+unity/Library/
+unity/Logs/
+unity/Temp/
+unity/Builds/

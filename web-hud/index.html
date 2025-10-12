@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>S.A.R.A. Web HUD</title>
+<style>
+:root{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+body{background:#0b0b0f;color:#eaeaf2;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.card{width:min(560px,92vw);background:#13131a;border:1px solid #232334;border-radius:16px;padding:20px 22px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+h1{font-size:20px;margin:0 0 8px;letter-spacing:.3px}
+p{line-height:1.5;opacity:.95}
+.cta{margin-top:14px;display:inline-block;padding:10px 14px;background:#2b2bf0;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer}
+.row{display:flex;gap:10px;align-items:center}
+.muted{color:#a9a9c2;font-size:12px}
+.status{margin-top:10px}
+.input{width:100%;border-radius:10px;border:1px solid #2a2a3a;background:#0f0f17;color:#eaeaf2;padding:10px}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="row"><h1 id="title">S.A.R.A.</h1><span class="muted" id="type"></span></div>
+  <p id="body">Loading…</p>
+  <div id="reflect-box" class="hidden">
+    <textarea id="reflect-input" class="input" rows="3" placeholder="60‑sec reflection…"></textarea>
+  </div>
+  <button id="cta" class="cta">…</button>
+  <div id="status" class="status muted"></div>
+</div>
+<script>
+const API_BASE=(new URLSearchParams(location.search).get('api')||'http://localhost:8000').replace(/\/$/,'');
+const titleEl=document.getElementById('title');
+const typeEl=document.getElementById('type');
+const bodyEl=document.getElementById('body');
+const ctaEl=document.getElementById('cta');
+const statusEl=document.getElementById('status');
+const reflectBox=document.getElementById('reflect-box');
+const reflectInput=document.getElementById('reflect-input');
+
+async function fetchCard(){
+  try{
+    const res=await fetch(`${API_BASE}/api/currentCard`);
+    const card=await res.json();
+    titleEl.textContent=card.title||'S.A.R.A.';
+    typeEl.textContent=card.type?`(${card.type})`:'';
+    bodyEl.textContent=card.body||'';
+    ctaEl.textContent=card.cta||'OK';
+    if(card.type==='reflect'){reflectBox.classList.remove('hidden');}
+    else{reflectBox.classList.add('hidden');}
+    statusEl.textContent='';
+  }catch(e){statusEl.textContent='Network error: '+e.message;}
+}
+
+async function onCta(){
+  if(!reflectBox.classList.contains('hidden')){
+    const text=reflectInput.value.trim();
+    if(!text){statusEl.textContent='Write a quick reflection first.';return;}
+    try{
+      const res=await fetch(`${API_BASE}/api/reflect`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+      const data=await res.json();
+      statusEl.textContent=data.ok?(data.summary||'Saved.'):(data.error||'Error');
+      reflectInput.value='';
+    }catch(e){statusEl.textContent='Error: '+e.message;}
+  }
+  await fetchCard();
+}
+ctaEl.addEventListener('click', onCta);
+fetchCard(); setInterval(fetchCard,10000);
+</script>
+</body></html>
