@@ -9,3 +9,4 @@ unity/Library/
 unity/Logs/
 unity/Temp/
 unity/Builds/
+server/credentials.json
