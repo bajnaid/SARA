@@ -7,11 +7,23 @@ from services.cards import compose_current_card, save_reflection
 load_dotenv()
 app = FastAPI(title="SARA MVP API", version="0.1.0")
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
+
+
+@app.get("/", tags=["meta"], include_in_schema=False)
+def root():
+    return {
+        "status": "ok",
+        "service": "sara-mvp-api",
+        "version": "0.1.0",
+        "docs": "/docs",
+        "health": "/api/health",
+    }
 
 @app.get("/api/health")
 async def health():
