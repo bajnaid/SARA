@@ -3,9 +3,11 @@ from fastapi import FastAPI, Body
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from services.cards import compose_current_card, save_reflection
+from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 app = FastAPI(title="SARA MVP API", version="0.1.0")
+app.mount("/hud", StaticFiles(directory="web-hud", html=True), name="hud")
 
 
 app.add_middleware(
@@ -23,6 +25,7 @@ def root():
         "version": "0.1.0",
         "docs": "/docs",
         "health": "/api/health",
+        "hud": "/hud",
     }
 
 @app.get("/api/health")
