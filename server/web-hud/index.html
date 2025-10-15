@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8">
+<title>SARA HUD</title>
+<style>
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 24px; }
+  pre { background:#111; color:#0f0; padding:16px; border-radius:8px; white-space:pre-wrap; }
+  a { color:#06f; }
+</style>
+<h1>SARA HUD</h1>
+<p>Live card below. <a href="/docs" target="_blank">Open API docs</a></p>
+<pre id="out">Loading…</pre>
+<script>
+fetch("/api/currentCard")
+  .then(r => r.json())
+  .then(j => { out.textContent = JSON.stringify(j, null, 2); })
+  .catch(e => { out.textContent = String(e); });
+</script>
