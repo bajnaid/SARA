@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from fastapi import FastAPI, Body, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -14,13 +15,26 @@ app = FastAPI(
     redoc_url=None,
     openapi_url="/openapi.json",
 )
-app.mount("/hud", StaticFiles(directory="web-hud", html=True), name="hud")
 
+BASE_DIR = Path(__file__).parent
+HUD_DIR = BASE_DIR / "web-hud"
+
+app.mount("/hud", StaticFiles(directory=str(HUD_DIR), html=True), name="hud")
+
+
+# CORS: allow all by default, or override via CORS_ALLOW_ORIGINS="https://foo,https://bar"
+_origin_env = os.getenv("CORS_ALLOW_ORIGINS", "*")
+if _origin_env.strip() == "*":
+    _allow_origins = ["*"]
+else:
+    _allow_origins = [o.strip() for o in _origin_env.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=_allow_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
