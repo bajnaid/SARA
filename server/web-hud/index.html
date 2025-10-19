@@ -1,16 +1,153 @@
-<!doctype html><meta charset="utf-8">
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>SARA HUD</title>
+
 <style>
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 24px; }
-  pre { background:#111; color:#0f0; padding:16px; border-radius:8px; white-space:pre-wrap; }
-  a { color:#06f; }
+  :root { font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  body { margin: 24px; max-width: 920px; }
+  h1 { margin: 0 0 16px; }
+  .row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .col { flex: 1 1 420px; min-width: 320px; }
+  pre, textarea, input { width: 100%; box-sizing: border-box; }
+  pre { background:#0b1020; color:#cde3ff; padding:12px; border-radius:8px; overflow:auto; min-height:140px; }
+  textarea { min-height:140px; padding:12px; border-radius:8px; border:1px solid #ddd; }
+  .controls { display:flex; gap:12px; align-items:center; margin-top:8px; flex-wrap: wrap; }
+  button { padding:10px 14px; border-radius:8px; border:0; cursor:pointer; }
+  button.primary { background:#2b7fff; color:#fff; }
+  small.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .ok { color: #0b8f39; }
+  .err { color: #b00020; }
+  .muted { color: #666; }
+  label { font-weight: 600; font-size: 0.95rem; display:block; margin: 12px 0 6px; }
+  input[type="password"], input[type="text"] { padding:8px 10px; border:1px solid #ddd; border-radius:8px; }
 </style>
+
 <h1>SARA HUD</h1>
-<p>Live card below. <a href="/docs" target="_blank">Open API docs</a></p>
-<pre id="out">Loading…</pre>
+<p class="muted">Talking to <span id="base"></span></p>
+
+<div class="row">
+  <div class="col">
+    <h2>Current Card</h2>
+    <pre id="card">Loading…</pre>
+    <div class="controls">
+      <button id="refresh">Refresh</button>
+    </div>
+  </div>
+
+  <div class="col">
+    <h2>New Reflection</h2>
+    <label for="reflectText">What’s on your mind?</label>
+    <textarea id="reflectText" placeholder="Type a quick note… (Cmd/Ctrl + Enter to save)"></textarea>
+
+    <div class="controls">
+      <button class="primary" id="save">Save Reflection</button>
+      <span id="status" class="muted"></span>
+    </div>
+
+    <details style="margin-top:12px;">
+      <summary>Advanced: API key (optional)</summary>
+      <label for="apiKey">API_KEY for /api/reflect (Bearer):</label>
+      <input id="apiKey" type="password" placeholder="Leave blank if your endpoint is open" />
+      <div class="controls">
+        <button id="saveKey">Save key (local)</button>
+        <button id="clearKey">Clear key</button>
+        <span id="keyStatus" class="muted"></span>
+      </div>
+      <small class="mono muted">Key is stored only in this browser (localStorage).</small>
+    </details>
+
+    <h3 style="margin-top:18px;">Last result</h3>
+    <pre id="result">—</pre>
+  </div>
+</div>
+
 <script>
-fetch("/api/currentCard")
-  .then(r => r.json())
-  .then(j => { out.textContent = JSON.stringify(j, null, 2); })
-  .catch(e => { out.textContent = String(e); });
+  // Base URL: same origin as this HUD on Render
+  const API_BASE = window.location.origin;
+  document.getElementById('base').textContent = API_BASE;
+
+  // Local key management (optional)
+  const keyInput = document.getElementById('apiKey');
+  const keyStatus = document.getElementById('keyStatus');
+  keyInput.value = localStorage.getItem('SARA_API_KEY') || '';
+  function bearerHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    const k = localStorage.getItem('SARA_API_KEY');
+    if (k && k.trim()) headers['Authorization'] = 'Bearer ' + k.trim();
+    return headers;
+  }
+
+  document.getElementById('saveKey').onclick = () => {
+    localStorage.setItem('SARA_API_KEY', keyInput.value || '');
+    keyStatus.textContent = 'Key saved';
+    setTimeout(()=> keyStatus.textContent = '', 1200);
+  };
+  document.getElementById('clearKey').onclick = () => {
+    localStorage.removeItem('SARA_API_KEY');
+    keyInput.value = '';
+    keyStatus.textContent = 'Key cleared';
+    setTimeout(()=> keyStatus.textContent = '', 1200);
+  };
+
+  // Load current card
+  async function loadCard() {
+    const out = document.getElementById('card');
+    out.textContent = 'Loading…';
+    try {
+      const r = await fetch(`${API_BASE}/api/currentCard`);
+      const j = await r.json();
+      out.textContent = JSON.stringify(j, null, 2);
+    } catch (e) {
+      out.textContent = String(e);
+    }
+  }
+
+  // Save reflection
+  async function saveReflection() {
+    const status = document.getElementById('status');
+    const result = document.getElementById('result');
+    const text = document.getElementById('reflectText').value.trim();
+    if (!text) {
+      status.textContent = 'Please type something first.';
+      status.className = 'err';
+      return;
+    }
+    status.textContent = 'Saving…';
+    status.className = 'muted';
+    try {
+      const r = await fetch(`${API_BASE}/api/reflect`, {
+        method: 'POST',
+        headers: bearerHeaders(),
+        body: JSON.stringify({ text })
+      });
+      const j = await r.json();
+      result.textContent = JSON.stringify(j, null, 2);
+      if (j.ok) {
+        status.textContent = 'Saved ✓';
+        status.className = 'ok';
+        document.getElementById('reflectText').value = '';
+        // Optional: refresh the card after a successful save
+        loadCard();
+      } else {
+        status.textContent = j.error || 'Failed';
+        status.className = 'err';
+      }
+    } catch (e) {
+      status.textContent = String(e);
+      status.className = 'err';
+    }
+  }
+
+  // Wire UI
+  document.getElementById('refresh').onclick = loadCard;
+  document.getElementById('save').onclick = saveReflection;
+  document.getElementById('reflectText').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      saveReflection();
+    }
+  });
+
+  // Initial load
+  loadCard();
 </script>
