@@ -1,12 +1,19 @@
 import os
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Body, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from services.cards import compose_current_card, save_reflection
 from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
-app = FastAPI(title="SARA MVP API", version="0.1.0")
+# Explicitly enable docs in prod and pin paths.
+app = FastAPI(
+    title="SARA MVP API",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url=None,
+    openapi_url="/openapi.json",
+)
 app.mount("/hud", StaticFiles(directory="web-hud", html=True), name="hud")
 
 
@@ -37,7 +44,19 @@ async def current_card():
     return await compose_current_card()
 
 @app.post("/api/reflect")
-async def reflect(payload: dict = Body(...)):
+async def reflect(
+    payload: dict = Body(...),
+    authorization: str | None = Header(None),
+):
+    # If an API_KEY is set, require it as a Bearer token.
+    expected = os.getenv("API_KEY")
+    if expected:
+        token = None
+        if authorization and authorization.lower().startswith("bearer "):
+            token = authorization.split(None, 1)[1].strip()
+        if token != expected:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
     text = (payload.get("text") or "").strip()
     if not text:
         return {"ok": False, "error": "No reflection text."}

@@ -1,69 +1,153 @@
 <!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>S.A.R.A. Web HUD</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SARA HUD</title>
+
 <style>
-:root{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-body{background:#0b0b0f;color:#eaeaf2;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-.card{width:min(560px,92vw);background:#13131a;border:1px solid #232334;border-radius:16px;padding:20px 22px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
-h1{font-size:20px;margin:0 0 8px;letter-spacing:.3px}
-p{line-height:1.5;opacity:.95}
-.cta{margin-top:14px;display:inline-block;padding:10px 14px;background:#2b2bf0;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer}
-.row{display:flex;gap:10px;align-items:center}
-.muted{color:#a9a9c2;font-size:12px}
-.status{margin-top:10px}
-.input{width:100%;border-radius:10px;border:1px solid #2a2a3a;background:#0f0f17;color:#eaeaf2;padding:10px}
-.hidden{display:none}
+  :root { font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  body { margin: 24px; max-width: 920px; }
+  h1 { margin: 0 0 16px; }
+  .row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .col { flex: 1 1 420px; min-width: 320px; }
+  pre, textarea, input { width: 100%; box-sizing: border-box; }
+  pre { background:#0b1020; color:#cde3ff; padding:12px; border-radius:8px; overflow:auto; min-height:140px; }
+  textarea { min-height:140px; padding:12px; border-radius:8px; border:1px solid #ddd; }
+  .controls { display:flex; gap:12px; align-items:center; margin-top:8px; flex-wrap: wrap; }
+  button { padding:10px 14px; border-radius:8px; border:0; cursor:pointer; }
+  button.primary { background:#2b7fff; color:#fff; }
+  small.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .ok { color: #0b8f39; }
+  .err { color: #b00020; }
+  .muted { color: #666; }
+  label { font-weight: 600; font-size: 0.95rem; display:block; margin: 12px 0 6px; }
+  input[type="password"], input[type="text"] { padding:8px 10px; border:1px solid #ddd; border-radius:8px; }
 </style>
-</head>
-<body>
-<div class="card">
-  <div class="row"><h1 id="title">S.A.R.A.</h1><span class="muted" id="type"></span></div>
-  <p id="body">Loading…</p>
-  <div id="reflect-box" class="hidden">
-    <textarea id="reflect-input" class="input" rows="3" placeholder="60‑sec reflection…"></textarea>
+
+<h1>SARA HUD</h1>
+<p class="muted">Talking to <span id="base"></span></p>
+
+<div class="row">
+  <div class="col">
+    <h2>Current Card</h2>
+    <pre id="card">Loading…</pre>
+    <div class="controls">
+      <button id="refresh">Refresh</button>
+    </div>
   </div>
-  <button id="cta" class="cta">…</button>
-  <div id="status" class="status muted"></div>
+
+  <div class="col">
+    <h2>New Reflection</h2>
+    <label for="reflectText">What’s on your mind?</label>
+    <textarea id="reflectText" placeholder="Type a quick note… (Cmd/Ctrl + Enter to save)"></textarea>
+
+    <div class="controls">
+      <button class="primary" id="save">Save Reflection</button>
+      <span id="status" class="muted"></span>
+    </div>
+
+    <details style="margin-top:12px;">
+      <summary>Advanced: API key (optional)</summary>
+      <label for="apiKey">API_KEY for /api/reflect (Bearer):</label>
+      <input id="apiKey" type="password" placeholder="Leave blank if your endpoint is open" />
+      <div class="controls">
+        <button id="saveKey">Save key (local)</button>
+        <button id="clearKey">Clear key</button>
+        <span id="keyStatus" class="muted"></span>
+      </div>
+      <small class="mono muted">Key is stored only in this browser (localStorage).</small>
+    </details>
+
+    <h3 style="margin-top:18px;">Last result</h3>
+    <pre id="result">—</pre>
+  </div>
 </div>
+
 <script>
-const API_BASE=(new URLSearchParams(location.search).get('api')||'http://localhost:8000').replace(/\/$/,'');
-const titleEl=document.getElementById('title');
-const typeEl=document.getElementById('type');
-const bodyEl=document.getElementById('body');
-const ctaEl=document.getElementById('cta');
-const statusEl=document.getElementById('status');
-const reflectBox=document.getElementById('reflect-box');
-const reflectInput=document.getElementById('reflect-input');
+  // Base URL: same origin as this HUD on Render
+  const API_BASE = window.location.origin;
+  document.getElementById('base').textContent = API_BASE;
 
-async function fetchCard(){
-  try{
-    const res=await fetch(`${API_BASE}/api/currentCard`);
-    const card=await res.json();
-    titleEl.textContent=card.title||'S.A.R.A.';
-    typeEl.textContent=card.type?`(${card.type})`:'';
-    bodyEl.textContent=card.body||'';
-    ctaEl.textContent=card.cta||'OK';
-    if(card.type==='reflect'){reflectBox.classList.remove('hidden');}
-    else{reflectBox.classList.add('hidden');}
-    statusEl.textContent='';
-  }catch(e){statusEl.textContent='Network error: '+e.message;}
-}
-
-async function onCta(){
-  if(!reflectBox.classList.contains('hidden')){
-    const text=reflectInput.value.trim();
-    if(!text){statusEl.textContent='Write a quick reflection first.';return;}
-    try{
-      const res=await fetch(`${API_BASE}/api/reflect`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
-      const data=await res.json();
-      statusEl.textContent=data.ok?(data.summary||'Saved.'):(data.error||'Error');
-      reflectInput.value='';
-    }catch(e){statusEl.textContent='Error: '+e.message;}
+  // Local key management (optional)
+  const keyInput = document.getElementById('apiKey');
+  const keyStatus = document.getElementById('keyStatus');
+  keyInput.value = localStorage.getItem('SARA_API_KEY') || '';
+  function bearerHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    const k = localStorage.getItem('SARA_API_KEY');
+    if (k && k.trim()) headers['Authorization'] = 'Bearer ' + k.trim();
+    return headers;
   }
-  await fetchCard();
-}
-ctaEl.addEventListener('click', onCta);
-fetchCard(); setInterval(fetchCard,10000);
+
+  document.getElementById('saveKey').onclick = () => {
+    localStorage.setItem('SARA_API_KEY', keyInput.value || '');
+    keyStatus.textContent = 'Key saved';
+    setTimeout(()=> keyStatus.textContent = '', 1200);
+  };
+  document.getElementById('clearKey').onclick = () => {
+    localStorage.removeItem('SARA_API_KEY');
+    keyInput.value = '';
+    keyStatus.textContent = 'Key cleared';
+    setTimeout(()=> keyStatus.textContent = '', 1200);
+  };
+
+  // Load current card
+  async function loadCard() {
+    const out = document.getElementById('card');
+    out.textContent = 'Loading…';
+    try {
+      const r = await fetch(`${API_BASE}/api/currentCard`);
+      const j = await r.json();
+      out.textContent = JSON.stringify(j, null, 2);
+    } catch (e) {
+      out.textContent = String(e);
+    }
+  }
+
+  // Save reflection
+  async function saveReflection() {
+    const status = document.getElementById('status');
+    const result = document.getElementById('result');
+    const text = document.getElementById('reflectText').value.trim();
+    if (!text) {
+      status.textContent = 'Please type something first.';
+      status.className = 'err';
+      return;
+    }
+    status.textContent = 'Saving…';
+    status.className = 'muted';
+    try {
+      const r = await fetch(`${API_BASE}/api/reflect`, {
+        method: 'POST',
+        headers: bearerHeaders(),
+        body: JSON.stringify({ text })
+      });
+      const j = await r.json();
+      result.textContent = JSON.stringify(j, null, 2);
+      if (j.ok) {
+        status.textContent = 'Saved ✓';
+        status.className = 'ok';
+        document.getElementById('reflectText').value = '';
+        // Optional: refresh the card after a successful save
+        loadCard();
+      } else {
+        status.textContent = j.error || 'Failed';
+        status.className = 'err';
+      }
+    } catch (e) {
+      status.textContent = String(e);
+      status.className = 'err';
+    }
+  }
+
+  // Wire UI
+  document.getElementById('refresh').onclick = loadCard;
+  document.getElementById('save').onclick = saveReflection;
+  document.getElementById('reflectText').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      saveReflection();
+    }
+  });
+
+  // Initial load
+  loadCard();
 </script>
-</body></html>
