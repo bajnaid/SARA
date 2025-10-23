@@ -9,23 +9,34 @@ from typing import Optional, List
 from fastapi import FastAPI, Body, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
 import inspect
 import logging
 
-# Optional: import your card composer from services
+# Optional: import service-layer functions (no circular imports)
 try:
-    from services.ai_coach import compose_current_card  # type: ignore
+    from services.ai_coach import (  # type: ignore
+        svc_current_card,
+        svc_list_reflections,
+        svc_export_reflections,
+    )
 except Exception:
-    # Safe fallback if import path differs
-    def compose_current_card() -> dict:
+    # Safe fallbacks if import path differs
+    def svc_current_card() -> dict:
         return {
             "type": "plan",
             "title": "Plan Today",
             "body": "No fixed events. 3 MITs: Sketch variant, Update deck, 45m study.",
             "cta": "Start Focus",
         }
+
+    def svc_list_reflections(limit: int = 10):
+        return {"ok": True, "items": []}
+
+    def svc_export_reflections():
+        return {"ok": True, "items": []}
 
 load_dotenv()
 
@@ -161,7 +172,7 @@ async def current_card():
     """Return the current card. Never 500s; falls back to a safe card on error."""
     try:
         # Call sync or async composer safely
-        result = compose_current_card()
+        result = svc_current_card()
         # If the composer is an async function or returned a coroutine, await it
         if inspect.iscoroutine(result):
             result = await result
@@ -185,6 +196,25 @@ async def reflect(payload: dict = Body(...), authorization: Optional[str] = Head
     if not text:
         return {"ok": False, "error": "No reflection text."}
     return await save_reflection(text)
+
+
+@app.get("/api/reflections")
+def list_reflections(limit: int = 10, authorization: Optional[str] = Header(None)):
+    # Require API key if configured
+    _require_api_key(authorization)
+    return svc_list_reflections(limit=limit)
+
+
+@app.get("/api/export")
+def export_reflections(authorization: Optional[str] = Header(None)):
+    # Require API key if configured
+    _require_api_key(authorization)
+    data = svc_export_reflections()
+    return JSONResponse(
+        content=data,
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="sara-reflections.json"'},
+    )
 
 
 # ------------------- Admin (backups) -------------------
