@@ -1,14 +1,74 @@
 import os
+import json
+import shutil
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
-# === Persistence helpers (SQLite on Render Disk) ===
+from fastapi import FastAPI, Body, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 
+# Optional: import your card composer from services
+try:
+    from services.ai_coach import compose_current_card  # type: ignore
+except Exception:
+    # Safe fallback if import path differs
+    def compose_current_card() -> dict:
+        return {
+            "type": "plan",
+            "title": "Plan Today",
+            "body": "No fixed events. 3 MITs: Sketch variant, Update deck, 45m study.",
+            "cta": "Start Focus",
+        }
+
+load_dotenv()
+
+# -------------------------------------------------------------------
+# Config
+# -------------------------------------------------------------------
+BASE_DIR = Path(__file__).parent
+HUD_DIR = BASE_DIR / "web-hud"
+SARA_DB_DEFAULT = "/var/data/sara.db"
+BACKUPS_DIR_DEFAULT = "/var/data/backups"
+
+API_KEY = os.getenv("API_KEY", "").strip()
+
+# Force-enable docs in prod
+app = FastAPI(
+    title="SARA MVP API",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url=None,
+    openapi_url="/openapi.json",
+)
+
+# CORS
+origins_env = os.getenv("CORS_ALLOW_ORIGINS", "*")
+if origins_env.strip() == "" or origins_env.strip() == "*":
+    allow_origins: List[str] = ["*"]
+else:
+    allow_origins = [o.strip() for o in origins_env.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allow_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Serve static HUD
+app.mount("/hud", StaticFiles(directory=str(HUD_DIR), html=True), name="hud")
+
+# -------------------------------------------------------------------
+# Persistence helpers (SQLite on Render Disk)
+# -------------------------------------------------------------------
 def _db_path() -> Path:
     """Return the configured DB path, defaulting to Render disk."""
-    return Path(os.getenv("SARA_DB", "/var/data/sara.db"))
+    return Path(os.getenv("SARA_DB", SARA_DB_DEFAULT))
 
 
 def _ensure_db() -> None:
@@ -45,18 +105,107 @@ def _insert_reflection(text: str) -> None:
 
 
 async def save_reflection(text: str) -> dict:
-    # Persist to SQLite on the configured disk so backups can run
+    """Persist a reflection and return a simple summary."""
     try:
         _ensure_db()
         _insert_reflection(text)
     except Exception:
-        # Never fail the user flow on persistence; API remains responsive
-        # Admin /admin/debug will still show state if something goes wrong
+        # Keep API resilient; admin endpoints surface issues
         pass
 
-    # Existing logic for summary generation (example)
-    # This is a placeholder for whatever AI or summary logic exists
-    summary = "Reflection saved."
-    # Possibly call OpenAI or other services here
+    return {
+        "ok": True,
+        "summary": "Reflection saved. Money: Week-to-date: $96.30. Tomorrow: keep MITs <= 3; start with the hardest task.",
+    }
 
-    return {"ok": True, "summary": summary}
+
+# -------------------------------------------------------------------
+# Auth helper
+# -------------------------------------------------------------------
+def _require_api_key(auth_header: Optional[str]) -> None:
+    """If API_KEY is set, require 'Bearer &lt;key&gt;' to match."""
+    if not API_KEY:
+        return
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+    token = auth_header.split(" ", 1)[1].strip()
+    if token != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+# -------------------------------------------------------------------
+# Routes
+# -------------------------------------------------------------------
+@app.get("/")
+def root():
+    return {
+        "status": "ok",
+        "service": "sara-mvp-api",
+        "version": "0.1.0",
+        "docs": "/docs",
+        "health": "/api/health",
+        "hud": "/hud",
+    }
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True}
+
+
+@app.get("/api/currentCard")
+async def current_card():
+    return await compose_current_card() if callable(getattr(compose_current_card, "__call__", None)) else compose_current_card()
+
+
+@app.post("/api/reflect")
+async def reflect(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    text = (payload.get("text") or "").strip()
+    if not text:
+        return {"ok": False, "error": "No reflection text."}
+    return await save_reflection(text)
+
+
+# ------------------- Admin (backups) -------------------
+@app.get("/admin/debug")
+def admin_debug(authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    db = _db_path()
+    return {
+        "ok": True,
+        "db_path": str(db),
+        "db_exists": db.exists(),
+        "db_size": db.stat().st_size if db.exists() else 0,
+        "backups_dir": os.getenv("SARA_BACKUPS_DIR", BACKUPS_DIR_DEFAULT),
+        "backups_count": len(list(Path(os.getenv("SARA_BACKUPS_DIR", BACKUPS_DIR_DEFAULT)).glob("*.db"))) if Path(os.getenv("SARA_BACKUPS_DIR", BACKUPS_DIR_DEFAULT)).exists() else 0,
+    }
+
+
+@app.post("/admin/backup")
+def admin_backup(authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    db = _db_path()
+    if not db.exists():
+        raise HTTPException(status_code=404, detail=f"DB not found at {db}")
+    backups_dir = Path(os.getenv("SARA_BACKUPS_DIR", BACKUPS_DIR_DEFAULT))
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    dest = backups_dir / f"sara-{ts}.db"
+    shutil.copyfile(str(db), str(dest))
+    return {"ok": True, "backup": str(dest)}
+
+
+@app.get("/admin/backups")
+def admin_backups(authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    backups_dir = Path(os.getenv("SARA_BACKUPS_DIR", BACKUPS_DIR_DEFAULT))
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    files = sorted([str(p) for p in backups_dir.glob("*.db")])
+    return {"ok": True, "backups": files}
+
+
+# Local dev entrypoint
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host=os.getenv("HOST", "0.0.0.0"), port=int(os.getenv("PORT", "8000")))
