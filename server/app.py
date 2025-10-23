@@ -97,11 +97,18 @@ def _backups_dir() -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
+def _db_path() -> Path:
+    return Path(os.getenv("SARA_DB", "/var/data/sara.db"))
+
 @app.post("/admin/backup", include_in_schema=False)
 def admin_backup(authorization: str | None = Header(None)):
     _require_api(authorization)
-    # create timestamped copy and prune old
-    db_path = Path(os.getenv("SARA_DB", "/var/data/sara.db"))
+
+    db_path = _db_path()
+    if not db_path.exists():
+        # Tell us exactly what's wrong instead of 500
+        raise HTTPException(status_code=404, detail=f"DB not found at {db_path}")
+
     backups_dir = _backups_dir()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M")
     dst = backups_dir / f"sara-{now}.db"
@@ -118,6 +125,20 @@ def admin_backup(authorization: str | None = Header(None)):
                 pass
 
     return {"ok": True, "created": str(dst.name), "pruned": removed}
+
+@app.get("/admin/debug", include_in_schema=False)
+def admin_debug(authorization: str | None = Header(None)):
+    _require_api(authorization)
+    db_path = _db_path()
+    backups_dir = _backups_dir()
+    return {
+        "ok": True,
+        "db_path": str(db_path),
+        "db_exists": db_path.exists(),
+        "db_size": (db_path.stat().st_size if db_path.exists() else 0),
+        "backups_dir": str(backups_dir),
+        "backups_count": len(list(backups_dir.glob("sara-*.db"))),
+    }
 
 @app.get("/admin/backups", include_in_schema=False)
 def admin_list_backups(authorization: str | None = Header(None)):
