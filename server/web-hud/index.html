@@ -123,9 +123,21 @@
     const out = document.getElementById('card');
     out.textContent = 'Loading…';
     try {
-      const r = await fetch(`${API_BASE}/api/currentCard`);
-      const j = await r.json();
-      out.textContent = JSON.stringify(j, null, 2);
+      const r = await fetch(`${API_BASE}/api/currentCard`, {
+        headers: { 'Accept': 'application/json' }
+      });
+      const ct = (r.headers.get('content-type') || '').toLowerCase();
+      if (!r.ok) {
+        const body = await r.text();
+        throw new Error(`HTTP ${r.status} on /api/currentCard — ${body.slice(0,200)}`);
+      }
+      if (ct.includes('application/json')) {
+        const j = await r.json();
+        out.textContent = JSON.stringify(j, null, 2);
+      } else {
+        const t = await r.text();
+        throw new Error(`Expected JSON, got ${ct || 'unknown content-type'} — ${t.slice(0,200)}`);
+      }
     } catch (e) {
       out.textContent = String(e);
     }
@@ -155,7 +167,18 @@
         headers: bearerHeaders(),
         body: JSON.stringify({ text })
       });
-      const j = await r.json();
+      const ct = (r.headers.get('content-type') || '').toLowerCase();
+      if (!r.ok) {
+        const body = await r.text();
+        throw new Error(`HTTP ${r.status} on /api/reflect — ${body.slice(0,200)}`);
+      }
+      let j;
+      if (ct.includes('application/json')) {
+        j = await r.json();
+      } else {
+        const t = await r.text();
+        throw new Error(`Expected JSON, got ${ct || 'unknown content-type'} — ${t.slice(0,200)}`);
+      }
       result.textContent = JSON.stringify(j, null, 2);
 
       if (j.ok) {
