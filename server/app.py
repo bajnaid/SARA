@@ -11,6 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
+import inspect
+import logging
+
 # Optional: import your card composer from services
 try:
     from services.ai_coach import compose_current_card  # type: ignore
@@ -155,7 +158,24 @@ def health():
 
 @app.get("/api/currentCard")
 async def current_card():
-    return await compose_current_card() if callable(getattr(compose_current_card, "__call__", None)) else compose_current_card()
+    """Return the current card. Never 500s; falls back to a safe card on error."""
+    try:
+        # Call sync or async composer safely
+        result = compose_current_card()
+        # If the composer is an async function or returned a coroutine, await it
+        if inspect.iscoroutine(result):
+            result = await result
+        if not isinstance(result, dict):
+            raise TypeError(f"compose_current_card returned {type(result)}")
+        return result
+    except Exception:
+        logging.exception("/api/currentCard failed; returning fallback")
+        return {
+            "type": "plan",
+            "title": "Plan Today",
+            "body": "(fallback) Endpoint error. No fixed events. 3 MITs: Sketch variant, Update deck, 45m study.",
+            "cta": "Start Focus",
+        }
 
 
 @app.post("/api/reflect")
