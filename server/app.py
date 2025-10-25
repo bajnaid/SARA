@@ -11,6 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
+from fastapi.responses import StreamingResponse
+from io import BytesIO
+from openai import OpenAI
 
 import inspect
 import logging
@@ -39,6 +42,9 @@ except Exception:
         return {"ok": True, "items": []}
 
 load_dotenv()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+_oai = OpenAI(api_key=OPENAI_API_KEY)
 
 # -------------------------------------------------------------------
 # Config
