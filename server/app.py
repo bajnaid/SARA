@@ -234,14 +234,13 @@ async def api_tts(payload: dict = Body(...), authorization: Optional[str] = Head
         raise HTTPException(400, "text required")
 
     try:
-        # OpenAI TTS: "gpt-4o-mini-tts" voices: alloy, verse, coral, etc.
+        # OpenAI TTS: "gpt-4o-mini-tts" default output is mp3 bytes
         resp = _oai.audio.speech.create(
             model="gpt-4o-mini-tts",
             voice=payload.get("voice", "alloy"),
             input=text,
-            format="mp3",
         )
-        audio_bytes = resp.read()
+        audio_bytes = resp.read()  # bytes
         buf = BytesIO(audio_bytes)
         return StreamingResponse(buf, media_type="audio/mpeg")
     except Exception as e:
