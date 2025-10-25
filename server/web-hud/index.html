@@ -62,6 +62,10 @@
       <button class="primary" id="save">Save Reflection</button>
       <span id="status" class="muted"></span>
     </div>
+    <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+      <button id="speakBtn">🔊 Speak</button>
+      <audio id="ttsAudio" controls style="display:none;"></audio>
+    </div>
 
     <details style="margin-top:10px;">
       <summary>Advanced: API key (optional)</summary>
@@ -230,4 +234,42 @@
 
   // Initial load
   loadCard();
+</script>
+<script>
+async function speakText(text) {
+  const apiKey = (localStorage.getItem('SARA_API_KEY') || '').trim();
+  const res = await fetch(`${API_BASE}/api/tts`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {})
+    },
+    body: JSON.stringify({ text, voice: "alloy" })
+  });
+  if (!res.ok) {
+    const err = await res.text().catch(()=>res.statusText);
+    throw new Error(`TTS failed: ${res.status} ${err}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const audio = document.getElementById("ttsAudio");
+  audio.style.display = "block";
+  audio.src = url;
+  await audio.play();
+}
+
+document.getElementById("speakBtn").addEventListener("click", async () => {
+  const textEl = document.getElementById("reflectText");
+  const text = (textEl?.value || "").trim();
+  if (!text) {
+    alert("Please type something first.");
+    return;
+  }
+  try {
+    await speakText(text);
+  } catch (e) {
+    console.error(e);
+    alert(e.message || "TTS failed");
+  }
+});
 </script>
