@@ -64,6 +64,7 @@
     </div>
     <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
       <button id="speakBtn">🔊 Speak</button>
+      <button id="micBtn">🎙️ Mic</button>
       <audio id="ttsAudio" controls style="display:none;"></audio>
     </div>
 
@@ -272,4 +273,65 @@ document.getElementById("speakBtn").addEventListener("click", async () => {
     alert(e.message || "TTS failed");
   }
 });
+
+// --- Mic (record ~6s and send to /api/stt), inject transcript into the textarea
+let mediaRecorder, chunks = [];
+const micBtn = document.getElementById("micBtn");
+if (micBtn) {
+  micBtn.addEventListener("click", async () => {
+    try {
+      // Request mic
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunks = [];
+      mediaRecorder = new MediaRecorder(stream);
+      micBtn.disabled = true;
+      micBtn.textContent = "⏺️ Recording…";
+
+      mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      mediaRecorder.onstop = async () => {
+        try {
+          const blob = new Blob(chunks, { type: "audio/webm" });
+          const form = new FormData();
+          form.append("audio", blob, "mic.webm");
+
+          const apiKey = (localStorage.getItem("SARA_API_KEY") || "").trim();
+          const res = await fetch(`${API_BASE}/api/stt`, {
+            method: "POST",
+            headers: { ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}) },
+            body: form
+          });
+
+          const j = await res.json().catch(() => ({}));
+          if (j && j.ok && j.text) {
+            const textEl = document.getElementById("reflectText");
+            if (textEl) textEl.value = j.text;
+          } else {
+            alert("STT failed");
+          }
+        } catch (err) {
+          console.error(err);
+          alert("STT upload failed");
+        } finally {
+          micBtn.disabled = false;
+          micBtn.textContent = "🎙️ Mic";
+          // Stop tracks to release the mic
+          stream.getTracks().forEach(t => t.stop());
+        }
+      };
+
+      mediaRecorder.start();
+      // Auto stop after ~6 seconds
+      setTimeout(() => {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+          mediaRecorder.stop();
+        }
+      }, 6000);
+    } catch (e) {
+      console.error(e);
+      alert("Mic access failed (check browser permissions).");
+      micBtn.disabled = false;
+      micBtn.textContent = "🎙️ Mic";
+    }
+  });
+}
 </script>
