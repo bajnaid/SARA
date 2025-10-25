@@ -223,6 +223,54 @@ def export_reflections(authorization: Optional[str] = Header(None)):
     )
 
 
+@app.post("/api/tts")
+async def api_tts(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    if not OPENAI_API_KEY:
+        raise HTTPException(500, "OPENAI_API_KEY missing")
+
+    text = (payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "text required")
+
+    try:
+        # OpenAI TTS: "gpt-4o-mini-tts" voices: alloy, verse, coral, etc.
+        resp = _oai.audio.speech.create(
+            model="gpt-4o-mini-tts",
+            voice=payload.get("voice", "alloy"),
+            input=text,
+            format="mp3",
+        )
+        audio_bytes = resp.read()
+        buf = BytesIO(audio_bytes)
+        return StreamingResponse(buf, media_type="audio/mpeg")
+    except Exception as e:
+        logging.exception("TTS failed")
+        raise HTTPException(500, f"TTS error: {e}")
+
+@app.post("/api/stt")
+async def api_stt(authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    if not OPENAI_API_KEY:
+        raise HTTPException(500, "OPENAI_API_KEY missing")
+
+    from fastapi import UploadFile, File
+
+    async def _read(file: UploadFile = File(...)):
+        return file
+
+    file = await _read()  # type: ignore
+    try:
+        tr = _oai.audio.transcriptions.create(
+            model="whisper-1",
+            file=(file.filename, await file.read(), file.content_type or "audio/mpeg"),
+        )
+        return {"ok": True, "text": tr.text}
+    except Exception as e:
+        logging.exception("STT failed")
+        raise HTTPException(500, f"STT error: {e}")
+
+
 # ------------------- Admin (backups) -------------------
 @app.get("/admin/debug")
 def admin_debug(authorization: Optional[str] = Header(None)):
