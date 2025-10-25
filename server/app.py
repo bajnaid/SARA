@@ -55,6 +55,7 @@ SARA_DB_DEFAULT = "/var/data/sara.db"
 BACKUPS_DIR_DEFAULT = "/var/data/backups"
 
 API_KEY = os.getenv("API_KEY", "").strip()
+ENFORCE_API_KEY = os.getenv("ENFORCE_API_KEY", "true").strip().lower() == "true"
 
 # Force-enable docs in prod
 app = FastAPI(
@@ -143,14 +144,21 @@ async def save_reflection(text: str) -> dict:
 # Auth helper
 # -------------------------------------------------------------------
 def _require_api_key(auth_header: Optional[str]) -> None:
-    """If API_KEY is set, require 'Bearer &lt;key&gt;' to match."""
-    if not API_KEY:
+    """
+    If ENFORCE_API_KEY is true AND API_KEY is set, require 'Bearer <key>'.
+    When ENFORCE_API_KEY is false, this is a no-op to make the MVP publicly usable.
+    """
+    # Short‑circuit if not enforcing or if no API key is configured
+    if not ENFORCE_API_KEY or not API_KEY:
         return
+
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
+
     token = auth_header.split(" ", 1)[1].strip()
     if token != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        # Use 403 to indicate provided credentials are not acceptable
+        raise HTTPException(status_code=403, detail="Invalid API key")
 
 
 # -------------------------------------------------------------------
