@@ -65,6 +65,7 @@
     <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
       <button id="speakBtn">🔊 Speak</button>
       <button id="micBtn">🎙️ Mic</button>
+      <button id="askBtn" class="secondary">🤖 Ask SARA</button>
       <audio id="ttsAudio" controls style="display:none;"></audio>
     </div>
 
@@ -259,6 +260,27 @@ async function speakText(text) {
   await audio.play();
 }
 
+async function chatAndGetReply(text) {
+  const apiKey = (localStorage.getItem('SARA_API_KEY') || '').trim();
+  const res = await fetch(`${API_BASE}/api/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {})
+    },
+    body: JSON.stringify({ text })
+  });
+  if (!res.ok) {
+    const err = await res.text().catch(()=>res.statusText);
+    throw new Error(`Chat failed: ${res.status} ${err}`);
+  }
+  const j = await res.json();
+  if (!j || !j.ok || !j.reply) {
+    throw new Error("Chat failed: empty reply");
+  }
+  return j.reply;
+}
+
 document.getElementById("speakBtn").addEventListener("click", async () => {
   const textEl = document.getElementById("reflectText");
   const text = (textEl?.value || "").trim();
@@ -274,6 +296,27 @@ document.getElementById("speakBtn").addEventListener("click", async () => {
   }
 });
 
+// Ask SARA (send text to /api/chat, then TTS the assistant reply)
+const askBtn = document.getElementById("askBtn");
+const resultBox = document.getElementById("result");
+if (askBtn) {
+  askBtn.addEventListener("click", async () => {
+    const textEl = document.getElementById("reflectText");
+    const text = (textEl?.value || "").trim();
+    if (!text) {
+      alert("Type something first or use the Mic.");
+      return;
+    }
+    try {
+      const reply = await chatAndGetReply(text);
+      if (resultBox) resultBox.textContent = JSON.stringify({ ok: true, reply }, null, 2);
+      await speakText(reply);
+    } catch (e) {
+      console.error(e);
+      alert(e.message || "Chat failed");
+    }
+  });
+}
 // --- Mic (record ~6s and send to /api/stt), inject transcript into the textarea
 let mediaRecorder, chunks = [];
 const micBtn = document.getElementById("micBtn");
@@ -305,6 +348,16 @@ if (micBtn) {
           if (j && j.ok && j.text) {
             const textEl = document.getElementById("reflectText");
             if (textEl) textEl.value = j.text;
+
+            // Auto-chat with the transcription and speak the reply
+            try {
+              const reply = await chatAndGetReply(j.text);
+              if (resultBox) resultBox.textContent = JSON.stringify({ ok: true, transcript: j.text, reply }, null, 2);
+              await speakText(reply);
+            } catch (e) {
+              console.error(e);
+              // Keep it non-blocking; user can still edit the text
+            }
           } else {
             alert("STT failed");
           }
