@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from fastapi import FastAPI, Body, Header, HTTPException
+from fastapi import FastAPI, Body, Header, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
@@ -256,26 +256,62 @@ async def api_tts(payload: dict = Body(...), authorization: Optional[str] = Head
         raise HTTPException(500, f"TTS error: {e}")
 
 @app.post("/api/stt")
-async def api_stt(authorization: Optional[str] = Header(None)):
+async def api_stt(
+    authorization: Optional[str] = Header(None),
+    audio: UploadFile = File(...),
+):
     _require_api_key(authorization)
     if not OPENAI_API_KEY:
         raise HTTPException(500, "OPENAI_API_KEY missing")
 
-    from fastapi import UploadFile, File
-
-    async def _read(file: UploadFile = File(...)):
-        return file
-
-    file = await _read()  # type: ignore
     try:
+        data = await audio.read()
+        filename = audio.filename or "mic.webm"
+        mime = audio.content_type or "audio/webm"
+
         tr = _oai.audio.transcriptions.create(
             model="whisper-1",
-            file=(file.filename, await file.read(), file.content_type or "audio/mpeg"),
+            file=(filename, data, mime),
         )
         return {"ok": True, "text": tr.text}
     except Exception as e:
         logging.exception("STT failed")
         raise HTTPException(500, f"STT error: {e}")
+
+
+# New concise chat endpoint
+@app.post("/api/chat")
+async def api_chat(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    if not OPENAI_API_KEY:
+        raise HTTPException(500, "OPENAI_API_KEY missing")
+
+    user_text = (payload.get("text") or "").strip()
+    if not user_text:
+        raise HTTPException(400, "text required")
+
+    try:
+        system = (
+            "You are S.A.R.A., a concise, warm assistant and coach. "
+            "Reply in 1–3 short sentences max unless the user asks for detail. "
+            "Prefer direct, helpful answers with a clear next step."
+        )
+
+        resp = _oai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_text},
+            ],
+            temperature=0.4,
+        )
+        reply = (resp.choices[0].message.content or "").strip()
+        if not reply:
+            reply = "I’m here. Try asking me again with a bit more detail?"
+        return {"ok": True, "reply": reply}
+    except Exception as e:
+        logging.exception("CHAT failed")
+        raise HTTPException(500, f"Chat error: {e}")
 
 
 # ------------------- Admin (backups) -------------------
