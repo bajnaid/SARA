@@ -32,6 +32,17 @@
   .dark .secondary { background:#1b2230; color:#e6e6e6; }
 </style>
 
+<!-- One-time init overlay to unlock audio + request mic -->
+<div id="initOverlay" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.82);z-index:9999;">
+  <div style="background:#111;border:1px solid #333;padding:20px 24px;border-radius:12px;min-width:320px;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.35);">
+    <h2 style="margin:0 0 10px">SARA is ready</h2>
+    <p style="opacity:.8;margin:0 0 16px">Click start to enable audio and microphone access.</p>
+    <button id="startSaraBtn" style="padding:10px 14px;border-radius:10px;border:1px solid #444;background:#1e1e1e;color:#e6e6e6;cursor:pointer">
+      ▶ Start SARA
+    </button>
+  </div>
+</div>
+
 <div class="topbar">
   <div>
     <h1>SARA HUD</h1>
@@ -291,6 +302,63 @@ async function chatAndGetReply(text) {
   return j.reply;
 }
 
+// --- One-time init overlay: unlock audio, pre-warm mic, greet
+let audioEl = document.getElementById("ttsAudio");
+// If the element was removed, recreate a hidden one:
+if (!audioEl) {
+  audioEl = document.createElement("audio");
+  audioEl.id = "ttsAudio";
+  audioEl.style.display = "none";
+  document.body.appendChild(audioEl);
+}
+
+// Keep a shared stream so subsequent recordings start immediately
+let micReady = false;
+
+async function initSara() {
+  // 1) unlock audio with a very short silent buffer (satisfies autoplay policies)
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start(0);
+  } catch {}
+
+  // 2) ask for mic once and keep the stream around
+  try {
+    if (!currentStream) {
+      currentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+    micReady = true;
+  } catch (e) {
+    console.warn("Mic permission not granted yet:", e);
+    // We still continue; user can use typing.
+  }
+
+  // 3) greet Saif
+  try {
+    await speakText("Hey Saif, how can I assist you today?");
+  } catch (e) {
+    console.warn("Greeting TTS failed:", e);
+  }
+}
+
+const initOverlay = document.getElementById("initOverlay");
+const startBtn = document.getElementById("startSaraBtn");
+if (startBtn) {
+  startBtn.addEventListener("click", async () => {
+    startBtn.disabled = true;
+    try {
+      await initSara();
+    } finally {
+      if (initOverlay) initOverlay.style.display = "none";
+      startBtn.disabled = false;
+    }
+  });
+};
+
 // --- Hold-to-talk (press and hold to record; on release: STT -> Chat -> TTS)
 let mediaRecorder, chunks = [], currentStream;
 const pttBtn = document.getElementById("pttBtn");
@@ -321,7 +389,9 @@ if (askBtn) {
 
 async function startRecording() {
   try {
-    currentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!currentStream) {
+      currentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
     chunks = [];
     mediaRecorder = new MediaRecorder(currentStream, { mimeType: "audio/webm" });
     pttBtn.textContent = "⏺️ Recording…";
