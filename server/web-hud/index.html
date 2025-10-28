@@ -15,6 +15,8 @@
   pre { background:#0b1020; color:#cde3ff; padding:12px; border-radius:8px; overflow:auto; min-height:140px; }
   textarea { min-height:140px; padding:12px; border-radius:8px; border:1px solid #ddd; font: inherit; }
   .controls { display:flex; gap:12px; align-items:center; margin-top:10px; flex-wrap: wrap; }
+  .mic-btn { width:56px; height:56px; border-radius:50%; background:#1b2230; color:#fff; border:1px solid #2a3342; display:inline-flex; align-items:center; justify-content:center; font-size:22px; cursor:pointer; }
+  .mic-btn.recording { background:#e53935; border-color:#b71c1c; }
   button { padding:10px 14px; border-radius:8px; border:0; cursor:pointer; font: inherit; }
   button.primary { background:#2b7fff; color:#fff; }
   button.secondary { background:#eee; }
@@ -75,7 +77,7 @@
     </div>
     <!-- buttons row -->
     <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-      <button id="pttBtn" class="secondary" title="Hold to talk">🎙️ Hold to talk</button>
+      <button id="micBtn" class="mic-btn" title="Tap to talk">🎙️</button>
       <button id="askBtn" class="secondary" title="Send the text above to SARA and hear the reply">🤖 Ask SARA</button>
       <label style="display:inline-flex;gap:6px;align-items:center;">
         <input type="checkbox" id="handsFree" />
@@ -361,8 +363,31 @@ if (startBtn) {
 
 // --- Hold-to-talk (press and hold to record; on release: STT -> Chat -> TTS)
 let mediaRecorder, chunks = [], currentStream;
-const pttBtn = document.getElementById("pttBtn");
+const micBtn = document.getElementById("micBtn");
 const resultBox = document.getElementById("result");
+let isRecording = false;
+
+function updateMicUI() {
+  if (!micBtn) return;
+  if (isRecording) {
+    micBtn.classList.add("recording");
+    micBtn.title = "Tap to stop";
+    micBtn.textContent = "⏺️";
+  } else {
+    micBtn.classList.remove("recording");
+    micBtn.title = "Tap to talk";
+    micBtn.textContent = "🎙️";
+  }
+}
+async function toggleRecording() {
+  if (isRecording) {
+    try { stopRecording(); } finally { isRecording = false; updateMicUI(); }
+    return;
+  }
+  await startRecording();
+  isRecording = true;
+  updateMicUI();
+}
 
 // Ask SARA with the textarea content, show and speak reply
 async function askSara() {
@@ -370,11 +395,8 @@ async function askSara() {
     const textEl = document.getElementById("reflectText");
     const text = (textEl.value || "").trim();
     if (!text) { alert("Type something to ask SARA."); return; }
-    // Get reply from API
     const reply = await chatAndGetReply(text);
-    // Show reply in the result box
     if (resultBox) resultBox.textContent = reply;
-    // Speak it
     await speakText(reply);
   } catch (e) {
     console.error(e);
@@ -387,22 +409,48 @@ if (askBtn) {
   askBtn.addEventListener("click", askSara);
 }
 
+// Choose a MIME type the browser supports; Safari often lacks webm support
+function pickMime() {
+  if (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm')) {
+    return { mime: 'audio/webm', ext: 'webm' };
+  }
+  if (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/mp4')) {
+    return { mime: 'audio/mp4', ext: 'm4a' };
+  }
+  return { mime: '', ext: 'wav' };
+}
+
 async function startRecording() {
   try {
     if (!currentStream) {
       currentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     }
-    chunks = [];
-    mediaRecorder = new MediaRecorder(currentStream, { mimeType: "audio/webm" });
-    pttBtn.textContent = "⏺️ Recording…";
-    pttBtn.disabled = false; // keep enabled so mouseup can fire
+    const { mime } = pickMime();
 
-    mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    chunks = [];
+    mediaRecorder = mime ? new MediaRecorder(currentStream, { mimeType: mime })
+                         : new MediaRecorder(currentStream);
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size) chunks.push(e.data);
+    };
+
     mediaRecorder.onstop = async () => {
       try {
-        const blob = new Blob(chunks, { type: "audio/webm" });
+        // flush any buffered data and allow one tick for final chunk
+        try { mediaRecorder.requestData?.(); } catch {}
+        await new Promise(r => setTimeout(r, 50));
+
+        const totalBytes = chunks.reduce((n, b) => n + (b?.size || 0), 0);
+        if (!totalBytes) {
+          alert("No audio captured. Try holding for ~1s, or use Chrome if you’re on Safari.");
+          return;
+        }
+
+        const { ext } = pickMime();
+        const blob = new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' });
         const form = new FormData();
-        form.append("audio", blob, "mic.webm");
+        form.append("audio", blob, `mic.${ext}`);
 
         const apiKey = (localStorage.getItem("SARA_API_KEY") || "").trim();
         const sttRes = await fetch(`${API_BASE}/api/stt`, {
@@ -410,14 +458,18 @@ async function startRecording() {
           headers: { ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}) },
           body: form
         });
+
+        if (!sttRes.ok) {
+          const t = await sttRes.text().catch(() => sttRes.statusText);
+          throw new Error(`STT failed: ${sttRes.status} ${t}`);
+        }
+
         const stt = await sttRes.json().catch(() => ({}));
         if (!stt || !stt.ok || !stt.text) throw new Error("STT failed");
 
-        // Inject transcript into the textarea
         const textEl = document.getElementById("reflectText");
         if (textEl) textEl.value = stt.text;
 
-        // Ask SARA and speak the reply
         const reply = await chatAndGetReply(stt.text);
         if (resultBox) resultBox.textContent = reply;
         await speakText(reply);
@@ -425,8 +477,10 @@ async function startRecording() {
         console.error(e);
         alert(e.message || "Mic/Chat failed");
       } finally {
-        pttBtn.textContent = "🎙️ Hold to talk";
+        isRecording = false;
+        updateMicUI();
         currentStream?.getTracks()?.forEach(t => t.stop());
+        currentStream = null;
       }
     };
 
@@ -434,7 +488,8 @@ async function startRecording() {
   } catch (e) {
     console.error(e);
     alert("Mic access failed (check browser permissions).");
-    pttBtn.textContent = "🎙️ Hold to talk";
+    isRecording = false;
+    updateMicUI();
   }
 }
 
@@ -444,11 +499,19 @@ function stopRecording() {
   } catch {}
 }
 
-if (pttBtn) {
-  pttBtn.addEventListener("mousedown", startRecording);
-  pttBtn.addEventListener("mouseup", stopRecording);
-  pttBtn.addEventListener("mouseleave", () => { if (mediaRecorder) stopRecording(); });
-  pttBtn.addEventListener("touchstart", (e)=>{ e.preventDefault(); startRecording(); }, { passive:false });
-  pttBtn.addEventListener("touchend", (e)=>{ e.preventDefault(); stopRecording(); }, { passive:false });
+if (micBtn) {
+  micBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    toggleRecording();
+  });
 }
+// Space bar toggles recording (global) unless focused on an input/textarea
+document.addEventListener("keydown", (e) => {
+  const tag = (document.activeElement?.tagName || "").toLowerCase();
+  const typing = tag === "input" || tag === "textarea";
+  if (!typing && e.code === "Space" && !e.repeat) {
+    e.preventDefault();
+    toggleRecording();
+  }
+});
 </script>
