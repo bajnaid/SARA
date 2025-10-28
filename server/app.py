@@ -107,6 +107,29 @@ def _ensure_db() -> None:
             )
             """
         )
+        # Add conversations and messages tables
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL,          -- 'user' | 'assistant' | 'system'
+                text TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            )
+            """
+        )
+        con.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, created_at)")
         con.commit()
     finally:
         con.close()
@@ -138,6 +161,76 @@ async def save_reflection(text: str) -> dict:
         "ok": True,
         "summary": "Reflection saved. Money: Week-to-date: $96.30. Tomorrow: keep MITs <= 3; start with the hardest task.",
     }
+
+
+# -------------------------------------------------------------------
+# Conversations & Messages helpers
+# -------------------------------------------------------------------
+def _create_conversation(title: str = "") -> int:
+    ts = datetime.now(timezone.utc).isoformat()
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        cur = con.cursor()
+        cur.execute(
+            "INSERT INTO conversations(title, created_at) VALUES (?, ?)",
+            (title.strip() or None, ts),
+        )
+        con.commit()
+        return int(cur.lastrowid)
+    finally:
+        con.close()
+
+def _insert_message(conversation_id: int, role: str, text: str) -> None:
+    ts = datetime.now(timezone.utc).isoformat()
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.execute(
+            "INSERT INTO messages(conversation_id, role, text, created_at) VALUES (?, ?, ?, ?)",
+            (conversation_id, role, text, ts),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+def _list_conversations(limit: int = 20) -> list[dict]:
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+        cur.execute(
+            """
+            SELECT c.id, COALESCE(c.title, '(untitled)') AS title,
+                   c.created_at,
+                   (SELECT m.text FROM messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) AS last_text
+            FROM conversations c
+            ORDER BY c.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+def _list_messages(conversation_id: int, limit: int = 50) -> list[dict]:
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+        cur.execute(
+            """
+            SELECT id, role, text, created_at
+            FROM messages
+            WHERE conversation_id=?
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (conversation_id, limit),
+        )
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        con.close()
 
 
 # -------------------------------------------------------------------
@@ -279,7 +372,7 @@ async def api_stt(
         raise HTTPException(500, f"STT error: {e}")
 
 
-# New concise chat endpoint
+# New concise chat endpoint with persistence and conversations
 @app.post("/api/chat")
 async def api_chat(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
     _require_api_key(authorization)
@@ -290,10 +383,26 @@ async def api_chat(payload: dict = Body(...), authorization: Optional[str] = Hea
     if not user_text:
         raise HTTPException(400, "text required")
 
+    # Optional conversation_id in payload; if missing, create one.
+    conv_id = payload.get("conversation_id")
+    try:
+        conv_id = int(conv_id) if conv_id is not None else None
+    except Exception:
+        conv_id = None
+    if not conv_id:
+        _ensure_db()
+        conv_id = _create_conversation(title=payload.get("title") or "")
+
+    # Store the user message
+    try:
+        _insert_message(conv_id, "user", user_text)
+    except Exception:
+        logging.exception("Failed to persist user message")
+
     try:
         system = (
             "You are S.A.R.A., a concise, warm assistant and coach. "
-            "Reply in 1–3 short sentences max unless the user asks for detail. "
+            "Reply in 1–3 short sentences unless more detail is requested. "
             "Prefer direct, helpful answers with a clear next step."
         )
 
@@ -308,10 +417,39 @@ async def api_chat(payload: dict = Body(...), authorization: Optional[str] = Hea
         reply = (resp.choices[0].message.content or "").strip()
         if not reply:
             reply = "I’m here. Try asking me again with a bit more detail?"
-        return {"ok": True, "reply": reply}
     except Exception as e:
         logging.exception("CHAT failed")
         raise HTTPException(500, f"Chat error: {e}")
+
+    # Store the assistant reply
+    try:
+        _insert_message(conv_id, "assistant", reply)
+    except Exception:
+        logging.exception("Failed to persist assistant message")
+
+    return {"ok": True, "reply": reply, "conversation_id": conv_id}
+
+
+# ------------------- Conversation API -------------------
+@app.get("/api/conversations")
+def api_list_conversations(limit: int = 20, authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    try:
+        _ensure_db()
+        return {"ok": True, "items": _list_conversations(limit=limit)}
+    except Exception as e:
+        logging.exception("list conversations failed")
+        raise HTTPException(500, f"error: {e}")
+
+@app.get("/api/conversations/{conversation_id}")
+def api_get_conversation(conversation_id: int, limit: int = 200, authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    try:
+        _ensure_db()
+        return {"ok": True, "items": _list_messages(conversation_id, limit=limit)}
+    except Exception as e:
+        logging.exception("get conversation failed")
+        raise HTTPException(500, f"error: {e}")
 
 
 # ------------------- Admin (backups) -------------------
