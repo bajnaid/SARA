@@ -17,6 +17,7 @@ from openai import OpenAI
 
 import inspect
 import logging
+import base64
 
 # Optional: import service-layer functions (no circular imports)
 try:
@@ -372,45 +373,48 @@ async def api_stt(
         raise HTTPException(500, f"STT error: {e}")
 
 
-# New concise chat endpoint with persistence and conversations
-@app.post("/api/chat")
-async def api_chat(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
-    _require_api_key(authorization)
+
+# Helper to run chat completion and persist both turns
+def _chat_and_persist(user_text: str, conv_id: Optional[int]) -> tuple[int, str]:
+    """
+    Runs chat completion with the current system prompt, persists user and assistant turns.
+    Returns (conversation_id, reply_text).
+    """
     if not OPENAI_API_KEY:
         raise HTTPException(500, "OPENAI_API_KEY missing")
 
-    user_text = (payload.get("text") or "").strip()
-    if not user_text:
+    text = (user_text or "").strip()
+    if not text:
         raise HTTPException(400, "text required")
 
-    # Optional conversation_id in payload; if missing, create one.
-    conv_id = payload.get("conversation_id")
+    # conversation id handling
     try:
-        conv_id = int(conv_id) if conv_id is not None else None
+        cid = int(conv_id) if conv_id is not None else None
     except Exception:
-        conv_id = None
-    if not conv_id:
+        cid = None
+    if not cid:
         _ensure_db()
-        conv_id = _create_conversation(title=payload.get("title") or "")
+        cid = _create_conversation(title=text[:120])
 
-    # Store the user message
+    # persist user message
     try:
-        _insert_message(conv_id, "user", user_text)
+        _insert_message(cid, "user", text)
     except Exception:
         logging.exception("Failed to persist user message")
 
+    # system style
+    system = (
+        "You are S.A.R.A., a concise, warm assistant and coach. "
+        "Reply in 1–3 short sentences unless more detail is requested. "
+        "Prefer direct, helpful answers with a clear next step."
+    )
+    # run model
     try:
-        system = (
-            "You are S.A.R.A., a concise, warm assistant and coach. "
-            "Reply in 1–3 short sentences unless more detail is requested. "
-            "Prefer direct, helpful answers with a clear next step."
-        )
-
         resp = _oai.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user", "content": user_text},
+                {"role": "user", "content": text},
             ],
             temperature=0.4,
         )
@@ -421,16 +425,111 @@ async def api_chat(payload: dict = Body(...), authorization: Optional[str] = Hea
         logging.exception("CHAT failed")
         raise HTTPException(500, f"Chat error: {e}")
 
-    # Store the assistant reply
+    # persist assistant message
     try:
-        _insert_message(conv_id, "assistant", reply)
+        _insert_message(cid, "assistant", reply)
     except Exception:
         logging.exception("Failed to persist assistant message")
 
-    return {"ok": True, "reply": reply, "conversation_id": conv_id}
+    return cid, reply
+
+
+# New concise chat endpoint with persistence and conversations
+@app.post("/api/chat")
+async def api_chat(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    user_text = (payload.get("text") or "").strip()
+    conv_id_in = payload.get("conversation_id")
+    cid, reply = _chat_and_persist(user_text, conv_id_in)
+    return {"ok": True, "reply": reply, "conversation_id": cid}
+
+
+# Speak endpoint: chat and stream TTS audio of reply
+@app.post("/api/speak")
+async def api_speak(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+    """
+    One-shot: user text -> assistant reply (persisted) -> MP3 audio stream of reply.
+    Sets X-Conversation-Id and X-Reply-Text headers for convenience.
+    """
+    _require_api_key(authorization)
+    if not OPENAI_API_KEY:
+        raise HTTPException(500, "OPENAI_API_KEY missing")
+
+    user_text = (payload.get("text") or "").strip()
+    conv_id_in = payload.get("conversation_id")
+    voice = (payload.get("voice") or "alloy").strip() or "alloy"
+
+    cid, reply = _chat_and_persist(user_text, conv_id_in)
+
+    try:
+        tts_resp = _oai.audio.speech.create(
+            model="gpt-4o-mini-tts",
+            voice=voice,
+            input=reply,
+        )
+        audio_bytes = tts_resp.read()
+        buf = BytesIO(audio_bytes)
+        headers = {
+            "X-Conversation-Id": str(cid),
+            # Base64-encode short replies for debug/clients; truncate if very long
+            "X-Reply-Text-B64": base64.b64encode(reply.encode("utf-8")).decode("ascii")[:4096],
+        }
+        return StreamingResponse(buf, media_type="audio/mpeg", headers=headers)
+    except Exception as e:
+        logging.exception("TTS(speak) failed")
+        raise HTTPException(500, f"TTS error: {e}")
 
 
 # ------------------- Conversation API -------------------
+# ------------------- Daily Summary Endpoint -------------------
+@app.get("/api/dailySummary")
+def api_daily_summary(limit_messages: int = 40, limit_reflections: int = 20, authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    if not OPENAI_API_KEY:
+        raise HTTPException(500, "OPENAI_API_KEY missing")
+
+    # gather recent messages
+    _ensure_db()
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.row_factory = sqlite3.Row
+        msgs = con.execute(
+            "SELECT role, text, created_at FROM messages ORDER BY id DESC LIMIT ?",
+            (limit_messages,)
+        ).fetchall()
+        refls = con.execute(
+            "SELECT text, created_at FROM reflections ORDER BY id DESC LIMIT ?",
+            (limit_reflections,)
+        ).fetchall()
+    finally:
+        con.close()
+
+    context = {
+        "messages": [dict(r) for r in msgs][::-1],
+        "reflections": [dict(r) for r in refls][::-1],
+    }
+
+    try:
+        prompt = (
+            "You are S.A.R.A. Summarize the past day for Saif. "
+            "Sections: 1) Mood & Energy, 2) Key Themes, 3) Decisions Made, "
+            "4) Actionable Next 3 Steps (bullet points, concrete). Be concise."
+        )
+        resp = _oai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": json.dumps(context)},
+            ],
+            temperature=0.3,
+        )
+        summary = (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        logging.exception("dailySummary failed")
+        raise HTTPException(500, f"Summary error: {e}")
+
+    return {"ok": True, "summary": summary}
+
 @app.get("/api/conversations")
 def api_list_conversations(limit: int = 20, authorization: Optional[str] = Header(None)):
     _require_api_key(authorization)
