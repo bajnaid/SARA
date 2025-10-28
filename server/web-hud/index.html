@@ -25,6 +25,10 @@
   .err { color:#b00020; }
   small.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .flash { animation: flash 1.2s ease-out 1; }
+  .nowrap { white-space: nowrap; }
+  .inline { display:inline-flex; gap:8px; align-items:center; }
+  /* keep the TTS audio element from affecting layout */
+  .sr-audio { position:absolute; width:0; height:0; opacity:0; pointer-events:none; }
   @keyframes flash { 0%{opacity:0} 20%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
 
   /* Dark theme */
@@ -79,17 +83,17 @@
     <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
       <button id="micBtn" class="mic-btn" title="Tap to talk">🎙️</button>
       <button id="askBtn" class="secondary" title="Send the text above to SARA and hear the reply">🤖 Ask SARA</button>
-      <label style="display:inline-flex;gap:8px;align-items:center;">
+      <label class="inline nowrap">
         <input type="checkbox" id="autoListen" />
-        Auto-listen (beta)
+        <span>Auto‑listen (beta)</span>
       </label>
-      <div style="display:flex;align-items:center;gap:6px;">
+      <div class="inline" style="align-items:center;gap:6px;">
         <span style="font-size:12px;opacity:.7;">level</span>
         <div id="vu" style="width:120px;height:8px;background:#111;border:1px solid #333;border-radius:999px;overflow:hidden;">
           <div id="vuFill" style="height:100%;width:0%;background:#4ade80;"></div>
         </div>
       </div>
-      <audio id="ttsAudio" controls style="display:none;"></audio>
+      <audio id="ttsAudio" class="sr-audio"></audio>
     </div>
 
     <details style="margin-top:10px;">
@@ -284,7 +288,6 @@ async function speakText(text) {
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const audio = document.getElementById("ttsAudio");
-  audio.style.display = "block";
   audio.src = url;
   await audio.play();
 }
