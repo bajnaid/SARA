@@ -79,10 +79,16 @@
     <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
       <button id="micBtn" class="mic-btn" title="Tap to talk">🎙️</button>
       <button id="askBtn" class="secondary" title="Send the text above to SARA and hear the reply">🤖 Ask SARA</button>
-      <label style="display:inline-flex;gap:6px;align-items:center;">
-        <input type="checkbox" id="handsFree" />
-        Hands-free
+      <label style="display:inline-flex;gap:8px;align-items:center;">
+        <input type="checkbox" id="autoListen" />
+        Auto-listen (beta)
       </label>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:12px;opacity:.7;">level</span>
+        <div id="vu" style="width:120px;height:8px;background:#111;border:1px solid #333;border-radius:999px;overflow:hidden;">
+          <div id="vuFill" style="height:100%;width:0%;background:#4ade80;"></div>
+        </div>
+      </div>
       <audio id="ttsAudio" controls style="display:none;"></audio>
     </div>
 
@@ -354,6 +360,9 @@ if (startBtn) {
     startBtn.disabled = true;
     try {
       await initSara();
+      if (typeof window.__startSARA === "function") {
+        await window.__startSARA();
+      }
     } finally {
       if (initOverlay) initOverlay.style.display = "none";
       startBtn.disabled = false;
@@ -514,4 +523,201 @@ document.addEventListener("keydown", (e) => {
     toggleRecording();
   }
 });
+</script>
+</script>
+<script>
+(() => {
+  // ---------- Config ----------
+  const API_BASE = location.origin;           // works for api.saralabs.xyz and Render
+  const USE_AUTH = false;                     // set true only if ENFORCE_API_KEY=true
+  const API_KEY = "";                         // fill only if USE_AUTH=true
+
+  // VAD parameters
+  const THRESHOLD   = 0.025;   // energy gate
+  const ATTACK_MS   = 120;     // speech must exceed threshold this long to start
+  const RELEASE_MS  = 750;     // silence this long to stop
+  const MAX_SEG_MS  = 25000;   // safety cap for a single utterance
+  const METER_SMOOTH = 0.2;
+
+  // ---------- State ----------
+  let mediaStream, audioCtx, analyser, sourceNode;
+  let mediaRecorder;
+  let chunks = [];
+  let listening = false;
+  let inUtterance = false;
+  let attackElapsed = 0;
+  let releaseElapsed = 0;
+  let segElapsed = 0;
+  let lastRaf = 0;
+  let levelSmooth = 0;
+
+  const elAuto = document.getElementById('autoListen');
+  const elMic  = document.getElementById('micBtn');
+  const vuFill = document.getElementById('vuFill');
+
+  // ---------- Mic control ----------
+  async function startMic() {
+    if (listening) return;
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true }
+    });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    sourceNode.connect(analyser);
+
+    // recorder in WebM/Opus if possible
+    const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
+      ? 'audio/webm;codecs=opus'
+      : 'audio/webm';
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime, audioBitsPerSecond: 48000 });
+    mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    mediaRecorder.onstop = handleUtteranceStop;
+
+    listening = true;
+    requestAnimationFrame(raf);
+  }
+
+  function stopMic() {
+    listening = false;
+    try { mediaRecorder && mediaRecorder.state !== 'inactive' && mediaRecorder.stop(); } catch {}
+    try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
+    try { audioCtx && audioCtx.close(); } catch {}
+    mediaStream = audioCtx = analyser = sourceNode = null;
+    if (vuFill) vuFill.style.width = '0%';
+  }
+
+  function getLevel() {
+    if (!analyser) return 0;
+    const buf = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i=0;i<buf.length;i++) {
+      const v = (buf[i]-128)/128;
+      sum += v*v;
+    }
+    return Math.sqrt(sum / buf.length);
+  }
+
+  function raf(ts=0) {
+    if (!listening) return;
+    const dt = lastRaf ? (ts - lastRaf) : 16;
+    lastRaf = ts;
+
+    const lvl = getLevel();
+    levelSmooth = levelSmooth + (lvl - levelSmooth) * METER_SMOOTH;
+    if (vuFill) vuFill.style.width = Math.min(100, Math.max(0, levelSmooth*100)) + '%';
+
+    if (!inUtterance) {
+      if (lvl >= THRESHOLD) {
+        attackElapsed += dt;
+        if (attackElapsed >= ATTACK_MS) startUtterance();
+      } else {
+        attackElapsed = 0;
+      }
+    } else {
+      segElapsed += dt;
+      if (lvl < THRESHOLD) releaseElapsed += dt; else releaseElapsed = 0;
+      if (releaseElapsed >= RELEASE_MS || segElapsed >= MAX_SEG_MS) stopUtterance();
+    }
+
+    requestAnimationFrame(raf);
+  }
+
+  function startUtterance() {
+    if (!mediaRecorder || mediaRecorder.state !== 'inactive') return;
+    chunks = [];
+    inUtterance = true;
+    releaseElapsed = 0;
+    segElapsed = 0;
+    mediaRecorder.start();
+    if (elMic) elMic.classList.add('recording');
+  }
+
+  function stopUtterance() {
+    if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
+    inUtterance = false;
+    mediaRecorder.stop(); // triggers handleUtteranceStop
+    if (elMic) elMic.classList.remove('recording');
+  }
+
+  async function handleUtteranceStop() {
+    if (!chunks.length) return;
+    const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+    chunks = [];
+    try {
+      const transcript = await stt(blob);
+      if (transcript) await chat(transcript);
+    } catch (e) {
+      console.error('VAD/STT error:', e);
+    }
+  }
+
+  // ---------- Network helpers ----------
+  async function stt(blob) {
+    const fd = new FormData();
+    fd.append('audio', blob, 'mic.webm');
+    const res = await fetch(`${API_BASE}/api/stt`, {
+      method: 'POST',
+      headers: USE_AUTH ? { 'Authorization': `Bearer ${API_KEY}` } : undefined,
+      body: fd
+    });
+    if (!res.ok) throw new Error(`STT ${res.status}: ${await res.text()}`);
+    const j = await res.json();
+    return j?.text || '';
+  }
+
+  async function chat(text) {
+    const res = await fetch(`${API_BASE}/api/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(USE_AUTH ? { 'Authorization': `Bearer ${API_KEY}` } : {})
+      },
+      body: JSON.stringify({ text })
+    });
+    const j = await res.json();
+    const reply = j?.reply || '';
+    if (reply) {
+      try {
+        const tts = await fetch(`${API_BASE}/api/tts`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(USE_AUTH ? { 'Authorization': `Bearer ${API_KEY}` } : {})
+          },
+          body: JSON.stringify({ text: reply, voice: 'alloy' })
+        });
+        const buf = await tts.arrayBuffer();
+        const audio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' })));
+        audio.play().catch(()=>{});
+      } catch (e) { console.warn('TTS failed', e); }
+    }
+    const last = document.getElementById('result');
+    if (last && reply) last.textContent = reply;
+  }
+
+  // ---------- UI wiring ----------
+  elAuto?.addEventListener('change', async () => {
+    if (elAuto.checked) await startMic(); else stopMic();
+  });
+
+  // Make the round mic toggle the whole auto-listen loop
+  elMic?.addEventListener('click', async () => {
+    if (!listening) {
+      await startMic();
+      if (elAuto) elAuto.checked = true;
+    } else {
+      stopMic();
+      if (elAuto) elAuto.checked = false;
+    }
+  });
+
+  // Expose a start hook the overlay can call
+  window.__startSARA = async () => {
+    try { audioCtx && audioCtx.state === 'suspended' && await audioCtx.resume(); } catch {}
+    if (elAuto?.checked) await startMic();
+  };
+})();
 </script>
