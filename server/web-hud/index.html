@@ -65,6 +65,7 @@
     <!-- buttons row -->
     <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
       <button id="pttBtn" class="secondary" title="Hold to talk">🎙️ Hold to talk</button>
+      <button id="askBtn" class="secondary" title="Send the text above to SARA and hear the reply">🤖 Ask SARA</button>
       <audio id="ttsAudio" controls style="display:none;"></audio>
     </div>
 
@@ -216,6 +217,12 @@
       e.preventDefault();
       saveReflection();
     }
+    // Ask SARA: Shift + Enter
+    if (e.shiftKey && e.key === 'Enter') {
+      e.preventDefault();
+      // call askSara if it exists (defined in later script)
+      if (typeof askSara === 'function') askSara();
+    }
     // Clear: Esc
     if (e.key === 'Escape') {
       input.value = '';
@@ -284,6 +291,29 @@ async function chatAndGetReply(text) {
 let mediaRecorder, chunks = [], currentStream;
 const pttBtn = document.getElementById("pttBtn");
 const resultBox = document.getElementById("result");
+
+// Ask SARA with the textarea content, show and speak reply
+async function askSara() {
+  try {
+    const textEl = document.getElementById("reflectText");
+    const text = (textEl.value || "").trim();
+    if (!text) { alert("Type something to ask SARA."); return; }
+    // Get reply from API
+    const reply = await chatAndGetReply(text);
+    // Show reply in the result box
+    if (resultBox) resultBox.textContent = reply;
+    // Speak it
+    await speakText(reply);
+  } catch (e) {
+    console.error(e);
+    alert(e.message || "Chat failed");
+  }
+}
+
+const askBtn = document.getElementById("askBtn");
+if (askBtn) {
+  askBtn.addEventListener("click", askSara);
+}
 
 async function startRecording() {
   try {
