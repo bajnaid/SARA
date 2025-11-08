@@ -164,6 +164,13 @@ async def save_reflection(text: str) -> dict:
     }
 
 
+# Ensure DB schema exists at import/startup so chat persistence is always available
+try:
+    _ensure_db()
+except Exception:
+    logging.exception("DB init failed at startup")
+
+
 # -------------------------------------------------------------------
 # Conversations & Messages helpers
 # -------------------------------------------------------------------
