@@ -49,6 +49,179 @@
   </div>
 </div>
 
+<!-- ===== SARA: Auto Speak toggle + Conversations sidebar (v0.2) ===== -->
+<div id="sara-controls" style="margin-top:12px; display:flex; gap:16px; align-items:center;">
+  <label style="display:inline-flex;gap:6px;align-items:center;">
+    <input type="checkbox" id="autoSpeak" checked />
+    🔊 Auto speak
+  </label>
+</div>
+
+<div id="sara-layout" style="display:flex; gap:16px; margin-top:16px;">
+  <aside id="convPane" style="width:280px; max-height:60vh; overflow:auto; border:1px solid var(--border,#ddd); border-radius:10px; padding:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <strong>Conversations</strong>
+      <button id="newChatBtn" title="Start a new chat">＋ New</button>
+    </div>
+    <ul id="convList" style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:6px;"></ul>
+  </aside>
+
+  <section style="flex:1; min-height:200px;">
+    <div id="chatLog" style="display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid var(--border,#ddd); border-radius:10px; max-height:60vh; overflow:auto;">
+      <!-- Chat messages will render here -->
+    </div>
+  </section>
+</div>
+<!-- ===== /SARA additions ===== -->
+<script>
+// ===== SARA v0.2: Auto-speak via /api/speak + Conversation sidebar =====
+(function(){
+  // Reuse API_BASE and bearerHeaders() from earlier scripts
+  const API_BASE = window.location.origin;
+
+  let conversationId = null;
+
+  const autoSpeakEl = document.getElementById("autoSpeak");
+  const convListEl = document.getElementById("convList");
+  const newChatBtn = document.getElementById("newChatBtn");
+  const chatLogEl  = document.getElementById("chatLog");
+  const audioEl    = document.getElementById("ttsAudio"); // existing hidden audio element
+
+  function renderMessage(role, text){
+    const wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.gap = "8px";
+    wrap.style.alignItems = "flex-start";
+
+    const bubble = document.createElement("div");
+    bubble.style.padding = "8px 10px";
+    bubble.style.borderRadius = "10px";
+    bubble.style.maxWidth = "90%";
+    bubble.style.whiteSpace = "pre-wrap";
+    bubble.style.border = "1px solid var(--border,#ddd)";
+    bubble.textContent = text;
+
+    if (role === "user") {
+      wrap.style.justifyContent = "flex-end";
+      bubble.style.background = "var(--user-bubble,#eef6ff)";
+    } else {
+      wrap.style.justifyContent = "flex-start";
+      bubble.style.background = "var(--assistant-bubble,#f7f7f7)";
+    }
+
+    wrap.appendChild(bubble);
+    chatLogEl.appendChild(wrap);
+    chatLogEl.scrollTop = chatLogEl.scrollHeight;
+  }
+
+  async function loadConversations(){
+    if (!convListEl) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/conversations`, { headers: bearerHeaders() });
+      const j = await res.json();
+      convListEl.innerHTML = "";
+      (j.items || []).forEach(c => {
+        const li = document.createElement("li");
+        const btn = document.createElement("button");
+        btn.textContent = `${c.title || "(untitled)"} · ${new Date(c.created_at).toLocaleString()}`.slice(0, 80);
+        btn.style.width = "100%";
+        btn.style.textAlign = "left";
+        btn.onclick = () => openConversation(c.id);
+        li.appendChild(btn);
+        convListEl.appendChild(li);
+      });
+    } catch(e) {
+      console.warn("loadConversations failed", e);
+    }
+  }
+
+  async function openConversation(id){
+    conversationId = id;
+    if (chatLogEl) chatLogEl.innerHTML = "";
+    try {
+      const res = await fetch(`${API_BASE}/api/conversations/${id}`, { headers: bearerHeaders() });
+      const j = await res.json();
+      (j.items || []).forEach(m => renderMessage(m.role, m.text));
+    } catch(e) {
+      console.warn("openConversation failed", e);
+    }
+  }
+
+  async function sendChat(text){
+    if (!text) return;
+    renderMessage("user", text);
+
+    // Auto-speak path uses /api/speak which returns audio + headers
+    if (autoSpeakEl && autoSpeakEl.checked) {
+      const res = await fetch(`${API_BASE}/api/speak`, {
+        method: "POST",
+        headers: { ...bearerHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ text, conversation_id: conversationId, voice: "alloy" })
+      });
+      if (!res.ok) {
+        renderMessage("assistant", `TTS failed (${res.status}).`);
+        return;
+      }
+      const cid = res.headers.get("X-Conversation-Id");
+      if (cid) conversationId = parseInt(cid, 10);
+      const replyB64 = res.headers.get("X-Reply-Text-B64");
+      let replyText = "(speech)";
+      if (replyB64) { try { replyText = atob(replyB64); } catch{} }
+      renderMessage("assistant", replyText);
+
+      // Play audio
+      const blob = await res.blob();
+      if (audioEl) {
+        const url = URL.createObjectURL(blob);
+        audioEl.src = url;
+        try { await audioEl.play(); } catch {}
+      }
+    } else {
+      // Text-only /api/chat path
+      const res = await fetch(`${API_BASE}/api/chat`, {
+        method: "POST",
+        headers: { ...bearerHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ text, conversation_id: conversationId })
+      });
+      const j = await res.json();
+      if (j.ok) {
+        conversationId = j.conversation_id || conversationId;
+        renderMessage("assistant", j.reply || "(no reply)");
+      } else {
+        renderMessage("assistant", "Chat failed.");
+      }
+    }
+
+    // refresh sidebar order
+    loadConversations();
+  }
+
+  // Wire the existing Ask SARA button to sendChat() so replies auto-speak + persist
+  const askBtn = document.getElementById("askBtn");
+  const inputEl = document.getElementById("reflectText");
+  if (askBtn && inputEl) {
+    askBtn.onclick = () => {
+      const t = (inputEl.value || "").trim();
+      if (!t) return;
+      inputEl.value = "";
+      sendChat(t);
+    };
+  }
+
+  // New chat button clears the panel and starts fresh conversation on next send
+  if (newChatBtn) {
+    newChatBtn.onclick = () => {
+      conversationId = null;
+      if (chatLogEl) chatLogEl.innerHTML = "";
+    };
+  }
+
+  // Initial sidebar load
+  loadConversations();
+})();
+// ===== /SARA v0.2 =====
+</script>
+
 <div class="topbar">
   <div>
     <h1>SARA HUD</h1>
