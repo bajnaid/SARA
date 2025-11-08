@@ -80,6 +80,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Conversation-Id", "X-Reply-Text-B64"],
 )
 
 # Serve static HUD
@@ -108,16 +109,24 @@ def _ensure_db() -> None:
             )
             """
         )
-        # Add conversations and messages tables
+        # Conversations table (+ migration for updated_at)
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
             """
         )
+        # add updated_at if missing (safe no-op if it exists)
+        try:
+            cols = [r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()]
+            if "updated_at" not in cols:
+                con.execute("ALTER TABLE conversations ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        except Exception:
+            pass
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS messages (
@@ -180,8 +189,8 @@ def _create_conversation(title: str = "") -> int:
     try:
         cur = con.cursor()
         cur.execute(
-            "INSERT INTO conversations(title, created_at) VALUES (?, ?)",
-            (title.strip() or None, ts),
+            "INSERT INTO conversations(title, created_at, updated_at) VALUES (?, ?, ?)",
+            (title.strip() or None, ts, ts),
         )
         con.commit()
         return int(cur.lastrowid)
@@ -196,6 +205,11 @@ def _insert_message(conversation_id: int, role: str, text: str) -> None:
             "INSERT INTO messages(conversation_id, role, text, created_at) VALUES (?, ?, ?, ?)",
             (conversation_id, role, text, ts),
         )
+        # bump updated_at on parent conversation
+        con.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (ts, conversation_id),
+        )
         con.commit()
     finally:
         con.close()
@@ -207,11 +221,19 @@ def _list_conversations(limit: int = 20) -> list[dict]:
         cur = con.cursor()
         cur.execute(
             """
-            SELECT c.id, COALESCE(c.title, '(untitled)') AS title,
+            SELECT c.id,
+                   COALESCE(c.title, '(untitled)') AS title,
                    c.created_at,
-                   (SELECT m.text FROM messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) AS last_text
+                   c.updated_at,
+                   (
+                     SELECT m.text
+                     FROM messages m
+                     WHERE m.conversation_id = c.id
+                     ORDER BY m.id DESC
+                     LIMIT 1
+                   ) AS last_text
             FROM conversations c
-            ORDER BY c.id DESC
+            ORDER BY datetime(c.updated_at) DESC, c.id DESC
             LIMIT ?
             """,
             (limit,),
@@ -539,6 +561,10 @@ def api_daily_summary(limit_messages: int = 40, limit_reflections: int = 20, aut
 
 @app.get("/api/conversations")
 def api_list_conversations(limit: int = 20, authorization: Optional[str] = Header(None)):
+    """
+    List recent conversations (most recently updated first).
+    Returns id, title, created_at, updated_at, and last_text.
+    """
     _require_api_key(authorization)
     try:
         _ensure_db()
@@ -556,6 +582,51 @@ def api_get_conversation(conversation_id: int, limit: int = 200, authorization: 
     except Exception as e:
         logging.exception("get conversation failed")
         raise HTTPException(500, f"error: {e}")
+
+
+# --- Conversation management endpoints ---
+
+@app.post("/api/conversations")
+def api_new_conversation(payload: dict = Body({}), authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    _ensure_db()
+    title = (payload.get("title") or "Untitled").strip()
+    cid = _create_conversation(title=title[:120])
+    return {"ok": True, "id": cid, "title": title}
+
+
+@app.patch("/api/conversations/{conversation_id}")
+def api_rename_conversation(conversation_id: int, payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    new_title = (payload.get("title") or "Untitled").strip()
+    if not new_title:
+        raise HTTPException(400, "title required")
+    _ensure_db()
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.execute(
+            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+            (new_title[:120], datetime.now(timezone.utc).isoformat(), conversation_id),
+        )
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True, "id": conversation_id, "title": new_title}
+
+
+@app.delete("/api/conversations/{conversation_id}")
+def api_delete_conversation(conversation_id: int, authorization: Optional[str] = Header(None)):
+    _require_api_key(authorization)
+    _ensure_db()
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        # delete children first to be safe on older SQLite builds
+        con.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+        con.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True, "id": conversation_id}
 
 
 # ------------------- Admin (backups) -------------------
