@@ -263,6 +263,32 @@ def _list_messages(conversation_id: int, limit: int = 50) -> list[dict]:
         con.close()
 
 
+# --- Conversation management helpers ---
+def _rename_conversation(conversation_id: int, title: str) -> None:
+    """Rename a conversation and bump updated_at."""
+    ts = datetime.now(timezone.utc).isoformat()
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.execute(
+            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+            (title.strip() or None, ts, conversation_id),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _delete_conversation(conversation_id: int) -> None:
+    """Delete a conversation and its messages."""
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+        con.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+        con.commit()
+    finally:
+        con.close()
+
+
 # -------------------------------------------------------------------
 # Auth helper
 # -------------------------------------------------------------------
@@ -602,15 +628,7 @@ def api_rename_conversation(conversation_id: int, payload: dict = Body(...), aut
     if not new_title:
         raise HTTPException(400, "title required")
     _ensure_db()
-    con = sqlite3.connect(str(_db_path()))
-    try:
-        con.execute(
-            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
-            (new_title[:120], datetime.now(timezone.utc).isoformat(), conversation_id),
-        )
-        con.commit()
-    finally:
-        con.close()
+    _rename_conversation(conversation_id, new_title)
     return {"ok": True, "id": conversation_id, "title": new_title}
 
 
@@ -618,14 +636,7 @@ def api_rename_conversation(conversation_id: int, payload: dict = Body(...), aut
 def api_delete_conversation(conversation_id: int, authorization: Optional[str] = Header(None)):
     _require_api_key(authorization)
     _ensure_db()
-    con = sqlite3.connect(str(_db_path()))
-    try:
-        # delete children first to be safe on older SQLite builds
-        con.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
-        con.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
-        con.commit()
-    finally:
-        con.close()
+    _delete_conversation(conversation_id)
     return {"ok": True, "id": conversation_id}
 
 
@@ -671,3 +682,43 @@ def admin_backups(authorization: Optional[str] = Header(None)):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=os.getenv("HOST", "0.0.0.0"), port=int(os.getenv("PORT", "8000")))
+
+# ------------------- Admin (backups) -------------------
+
+# --- Self-test endpoint ---
+@app.post("/api/selftest")
+def api_selftest(authorization: Optional[str] = Header(None)):
+    """
+    Runs a minimal create → chat → list → rename → delete cycle
+    without leaving test artifacts. Returns a concise report.
+    """
+    _require_api_key(authorization)
+    _ensure_db()
+    report: dict[str, list[str] | str | bool] = {"steps": []}
+
+    try:
+        # create
+        cid = _create_conversation("Self-test")
+        report["steps"].append(f"create:{cid}")  # type: ignore[arg-type]
+
+        # user turn + assistant turn (persisted)
+        _, reply = _chat_and_persist("Quick self-check: say 'pong' once.", cid)
+        report["steps"].append(f"chat:{'ok' if reply else 'no-reply'}")  # type: ignore[arg-type]
+
+        # list
+        convs = _list_conversations(limit=5)
+        report["steps"].append(f"list:{len(convs)}")  # type: ignore[arg-type]
+
+        # rename
+        _rename_conversation(cid, "Self-test (renamed)")
+        report["steps"].append("rename:ok")  # type: ignore[arg-type]
+
+        # delete
+        _delete_conversation(cid)
+        report["steps"].append("delete:ok")  # type: ignore[arg-type]
+
+        return {"ok": True, "report": report}
+    except Exception as e:
+        logging.exception("selftest failed")
+        report["error"] = str(e)
+        return {"ok": False, "report": report}
