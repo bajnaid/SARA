@@ -109,24 +109,16 @@ def _ensure_db() -> None:
             )
             """
         )
-        # Conversations table (+ migration for updated_at)
+        # Conversations table (no updated_at)
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                created_at TEXT NOT NULL
             )
             """
         )
-        # add updated_at if missing (safe no-op if it exists)
-        try:
-            cols = [r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()]
-            if "updated_at" not in cols:
-                con.execute("ALTER TABLE conversations ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
-        except Exception:
-            pass
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS messages (
@@ -189,8 +181,8 @@ def _create_conversation(title: str = "") -> int:
     try:
         cur = con.cursor()
         cur.execute(
-            "INSERT INTO conversations(title, created_at, updated_at) VALUES (?, ?, ?)",
-            (title.strip() or None, ts, ts),
+            "INSERT INTO conversations(title, created_at) VALUES (?, ?)",
+            (title.strip() or None, ts),
         )
         con.commit()
         return int(cur.lastrowid)
@@ -204,11 +196,6 @@ def _insert_message(conversation_id: int, role: str, text: str) -> None:
         con.execute(
             "INSERT INTO messages(conversation_id, role, text, created_at) VALUES (?, ?, ?, ?)",
             (conversation_id, role, text, ts),
-        )
-        # bump updated_at on parent conversation
-        con.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
-            (ts, conversation_id),
         )
         con.commit()
     finally:
@@ -224,7 +211,6 @@ def _list_conversations(limit: int = 20) -> list[dict]:
             SELECT c.id,
                    COALESCE(c.title, '(untitled)') AS title,
                    c.created_at,
-                   c.updated_at,
                    (
                      SELECT m.text
                      FROM messages m
@@ -233,7 +219,7 @@ def _list_conversations(limit: int = 20) -> list[dict]:
                      LIMIT 1
                    ) AS last_text
             FROM conversations c
-            ORDER BY datetime(c.updated_at) DESC, c.id DESC
+            ORDER BY datetime(c.created_at) DESC, c.id DESC
             LIMIT ?
             """,
             (limit,),
@@ -265,13 +251,12 @@ def _list_messages(conversation_id: int, limit: int = 50) -> list[dict]:
 
 # --- Conversation management helpers ---
 def _rename_conversation(conversation_id: int, title: str) -> None:
-    """Rename a conversation and bump updated_at."""
-    ts = datetime.now(timezone.utc).isoformat()
+    """Rename a conversation."""
     con = sqlite3.connect(str(_db_path()))
     try:
         con.execute(
-            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
-            (title.strip() or None, ts, conversation_id),
+            "UPDATE conversations SET title = ? WHERE id = ?",
+            (title.strip() or None, conversation_id),
         )
         con.commit()
     finally:
