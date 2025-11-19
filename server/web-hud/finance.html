@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>S.A.R.A // Finance</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #05060a;
+      --bg-alt: #0c0f18;
+      --card: #101320;
+      --fg: #f5f7ff;
+      --fg-muted: #9aa2c0;
+      --accent: #4f8cff;
+      --accent-soft: rgba(79, 140, 255, 0.12);
+      --border-subtle: #1b2030;
+      --danger: #ff4f6a;
+      --radius-lg: 18px;
+      --radius-md: 12px;
+      --shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      background: radial-gradient(circle at top, #15192a 0, #05060a 52%);
+      color: var(--fg);
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .shell {
+      width: 100%;
+      max-width: 1100px;
+      background: linear-gradient(145deg, #060712 0, #080a16 30%, #05060a 100%);
+      border-radius: 28px;
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      box-shadow: var(--shadow-soft);
+      padding: 20px 22px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .title-block h1 {
+      font-size: 20px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin: 0;
+      color: #f9fbff;
+    }
+
+    .title-block span {
+      display: inline-block;
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--fg-muted);
+    }
+
+    .pill {
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 999px;
+      padding: 4px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--fg-muted);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .pill-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 10px rgba(79, 140, 255, 0.7);
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .api-input {
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.35);
+      padding: 5px 10px;
+      font-size: 11px;
+      color: var(--fg-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .api-input input {
+      border: none;
+      outline: none;
+      background: transparent;
+      color: var(--fg);
+      font-size: 11px;
+      min-width: 160px;
+    }
+
+    .api-input input::placeholder {
+      color: rgba(154, 162, 192, 0.7);
+    }
+
+    .link-btn {
+      font-size: 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.4);
+      color: var(--fg-muted);
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.1fr);
+      gap: 16px;
+    }
+
+    @media (max-width: 880px) {
+      .grid { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    .card {
+      background: radial-gradient(circle at top left, #181c2a 0, #0a0d18 40%, #05060a 100%);
+      border-radius: var(--radius-lg);
+      padding: 16px 16px 14px;
+      border: 1px solid var(--border-subtle);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .card-title {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--fg-muted);
+    }
+
+    .card-subtitle {
+      font-size: 11px;
+      color: var(--fg-muted);
+    }
+
+    .pill-small {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(4, 8, 20, 0.7);
+      color: var(--fg-muted);
+    }
+
+    .big-number {
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+
+    .big-number span {
+      font-size: 13px;
+      color: var(--fg-muted);
+      margin-left: 4px;
+      font-weight: 400;
+    }
+
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--fg-muted);
+      margin-top: 4px;
+    }
+
+    .metric-row strong {
+      color: var(--fg);
+      font-weight: 500;
+    }
+
+    .input-shell {
+      background: rgba(3, 6, 18, 0.9);
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      align-items: center;
+      padding: 8px 10px;
+      gap: 8px;
+    }
+
+    .input-shell input {
+      border: none;
+      outline: none;
+      background: transparent;
+      color: var(--fg);
+      font-size: 13px;
+      width: 100%;
+    }
+
+    .input-shell input::placeholder {
+      color: rgba(154, 162, 192, 0.7);
+    }
+
+    .chip {
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 11px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: var(--fg-muted);
+      cursor: pointer;
+      background: rgba(4, 8, 20, 0.7);
+      white-space: nowrap;
+    }
+
+    .chip.selected {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--fg);
+    }
+
+    .primary-btn {
+      border-radius: 999px;
+      border: none;
+      outline: none;
+      padding: 7px 16px;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: radial-gradient(circle at top left, #4f8cff, #2751ff);
+      color: #f9fbff;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 8px 24px rgba(33, 76, 190, 0.7);
+    }
+
+    .primary-btn:active {
+      transform: translateY(1px);
+      box-shadow: 0 4px 16px rgba(33, 76, 190, 0.5);
+    }
+
+    .mic-btn {
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: radial-gradient(circle at top, rgba(79, 140, 255, 0.12), rgba(8, 10, 22, 0.95));
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .mic-btn.active {
+      border-color: var(--danger);
+      background: radial-gradient(circle at top, rgba(255, 79, 106, 0.18), rgba(8, 10, 22, 0.95));
+    }
+
+    .transactions {
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(3, 6, 18, 0.9);
+      max-height: 260px;
+      overflow-y: auto;
+      padding: 8px 0;
+      margin-top: 4px;
+    }
+
+    .tx-row {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr 0.7fr;
+      gap: 8px;
+      padding: 7px 10px;
+      font-size: 12px;
+      align-items: baseline;
+    }
+
+    .tx-row:nth-child(odd) {
+      background: rgba(255, 255, 255, 0.01);
+    }
+
+    .tx-merchant { color: var(--fg); }
+
+    .tx-note {
+      color: var(--fg-muted);
+      font-size: 11px;
+    }
+
+    .tx-amount {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--fg);
+    }
+
+    .tx-tag {
+      justify-self: end;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 3px 7px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: var(--fg-muted);
+    }
+
+    .insight {
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--fg-muted);
+      background: rgba(8, 14, 34, 0.9);
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(79, 140, 255, 0.25);
+      padding: 10px 11px;
+    }
+
+    .insight-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: rgba(154, 162, 192, 0.9);
+      margin-bottom: 4px;
+    }
+
+    .status {
+      font-size: 11px;
+      color: var(--fg-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #52d98b;
+      box-shadow: 0 0 12px rgba(82, 217, 139, 0.7);
+    }
+
+    .status.error .status-dot {
+      background: var(--danger);
+      box-shadow: 0 0 12px rgba(255, 79, 106, 0.8);
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="header">
+      <div class="title-block">
+        <h1>S.A.R.A // Finance</h1>
+        <span>Daily awareness for creatives who hate spreadsheets.</span>
+      </div>
+      <div class="header-right">
+        <div class="api-input">
+          <span>API key</span>
+          <input id="apiKeyInput" type="password" placeholder="Optional Bearer key" />
+        </div>
+        <button class="link-btn" onclick="window.location.href='/hud'">Back to HUD</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- Left column: Input + Today summary -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Log an expense</div>
+            <div class="card-subtitle">Talk to S.A.R.A. like a human. She’ll do the math.</div>
+          </div>
+          <div class="status" id="log-status">
+            <div class="status-dot"></div>
+            <span>Idle</span>
+          </div>
+        </div>
+
+        <div class="input-shell" style="margin-top: 4px;">
+          <input
+            id="expense-input"
+            type="text"
+            autocomplete="off"
+            placeholder="“Record $3 espresso at Mike’s” or “20 SAR Uber to Jeddah airport”"
+          />
+          <button class="mic-btn" id="mic-btn" title="Voice input (beta)">🎙</button>
+          <button class="primary-btn" id="log-btn">
+            <span>Log</span>
+            <span>↵</span>
+          </button>
+        </div>
+
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+          <button class="chip" data-emotion="calm">Calm</button>
+          <button class="chip" data-emotion="stressed">Stressed</button>
+          <button class="chip" data-emotion="tired">Tired</button>
+          <button class="chip" data-emotion="excited">Excited</button>
+          <button class="chip" data-emotion="guilty">Guilty</button>
+        </div>
+
+        <div style="margin-top: 10px;">
+          <div class="card-title">Today</div>
+          <div class="metric-row" style="margin-top: 6px;">
+            <div>
+              <div class="card-subtitle">Total spent</div>
+              <div class="big-number" id="total-spent">$0.00 <span id="currency-label">USD</span></div>
+            </div>
+            <div style="text-align:right;">
+              <div class="card-subtitle">Coffee today</div>
+              <div style="font-size:13px; font-variant-numeric: tabular-nums;" id="coffee-spent">$0.00</div>
+            </div>
+          </div>
+          <div class="metric-row">
+            <span>Transactions: <strong id="tx-count">0</strong></span>
+            <span id="top-category-label">Top category: –</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right column: Insight + transaction list -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">S.A.R.A.’s read on today</div>
+            <div class="card-subtitle">Not “good” or “bad” – just patterns.</div>
+          </div>
+          <span class="pill-small" id="summary-period">Today</span>
+        </div>
+
+        <div class="insight">
+          <div class="insight-title">Today’s pattern</div>
+          <div id="insight-text">
+            No spending logged yet. Once you add a few things, I’ll start reflecting your patterns back to you.
+          </div>
+        </div>
+
+        <div style="margin-top: 10px; font-size:11px; text-transform:uppercase; letter-spacing:0.12em; color:var(--fg-muted);">
+          Today’s transactions
+        </div>
+        <div class="transactions" id="tx-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = "/api/finance";
+
+    const expenseInput = document.getElementById("expense-input");
+    const logBtn = document.getElementById("log-btn");
+    const micBtn = document.getElementById("mic-btn");
+    const logStatus = document.getElementById("log-status");
+    const txList = document.getElementById("tx-list");
+    const totalSpentEl = document.getElementById("total-spent");
+    const coffeeSpentEl = document.getElementById("coffee-spent");
+    const txCountEl = document.getElementById("tx-count");
+    const topCategoryLabel = document.getElementById("top-category-label");
+    const currencyLabel = document.getElementById("currency-label");
+    const insightText = document.getElementById("insight-text");
+    const apiKeyInput = document.getElementById("apiKeyInput");
+
+    let selectedEmotion = null;
+    let isRecording = false;
+
+    function buildHeaders(json = true) {
+      const headers = {};
+      if (json) headers["Content-Type"] = "application/json";
+      const key = apiKeyInput.value.trim();
+      if (key) headers["Authorization"] = "Bearer " + key;
+      return headers;
+    }
+
+    function setLogStatus(text, isError = false) {
+      logStatus.classList.toggle("error", isError);
+      logStatus.querySelector("span").textContent = text;
+    }
+
+    async function fetchSummary() {
+      try {
+        const [summaryRes, todayRes] = await Promise.all([
+          fetch(`${API_BASE}/summary/daily`, { headers: buildHeaders(false) }),
+          fetch(`${API_BASE}/today`, { headers: buildHeaders(false) }),
+        ]);
+
+        if (!summaryRes.ok) throw new Error("Summary failed");
+        if (!todayRes.ok) throw new Error("Today list failed");
+
+        const summary = await summaryRes.json();
+        const today = await todayRes.json();
+
+        const total = summary.total_spent.toFixed(2);
+        const coffee = summary.coffee_spent.toFixed(2);
+
+        totalSpentEl.innerHTML = `$${total} <span id="currency-label">${summary.currency}</span>`;
+        coffeeSpentEl.textContent = `$${coffee}`;
+        txCountEl.textContent = summary.transaction_count;
+        insightText.textContent = summary.insight;
+
+        const cats = summary.by_category || {};
+        let topCat = "–";
+        let topVal = 0;
+        for (const [cat, val] of Object.entries(cats)) {
+          if (val > topVal) {
+            topVal = val;
+            topCat = `${cat} ($${val.toFixed(2)})`;
+          }
+        }
+        topCategoryLabel.textContent = `Top category: ${topCat}`;
+
+        renderTransactions(today);
+      } catch (err) {
+        console.error(err);
+        setLogStatus("Error talking to S.A.R.A.", true);
+      }
+    }
+
+    function renderTransactions(txs) {
+      if (!txs.length) {
+        txList.innerHTML =
+          '<div style="padding:8px 10px; font-size:12px; color:var(--fg-muted);">Nothing logged yet. Try adding one thing.</div>';
+        return;
+      }
+
+      txList.innerHTML = "";
+      for (const tx of txs) {
+        const row = document.createElement("div");
+        row.className = "tx-row";
+
+        const merchantDiv = document.createElement("div");
+        const merchant = tx.merchant || "Unnamed spend";
+        const note = tx.raw_input;
+        merchantDiv.innerHTML = `
+          <div class="tx-merchant">${merchant}</div>
+          <div class="tx-note">${note}</div>
+        `;
+
+        const amountDiv = document.createElement("div");
+        amountDiv.className = "tx-amount";
+        amountDiv.textContent = `$${tx.amount.toFixed(2)} ${tx.currency}`;
+
+        const tagDiv = document.createElement("div");
+        tagDiv.className = "tx-tag";
+        tagDiv.textContent = (tx.category || "other").toUpperCase();
+
+        row.appendChild(merchantDiv);
+        row.appendChild(amountDiv);
+        row.appendChild(tagDiv);
+
+        txList.appendChild(row);
+      }
+    }
+
+    async function logExpense() {
+      const text = expenseInput.value.trim();
+      if (!text) return;
+      setLogStatus("Logging…");
+      logBtn.disabled = true;
+
+      try {
+        const res = await fetch(`${API_BASE}/log`, {
+          method: "POST",
+          headers: buildHeaders(true),
+          body: JSON.stringify({
+            text,
+            emotion: selectedEmotion,
+          }),
+        });
+
+        if (!res.ok) {
+          throw new Error("Log failed");
+        }
+
+        await res.json();
+        expenseInput.value = "";
+        setLogStatus("Logged");
+        selectedEmotion = null;
+        document.querySelectorAll(".chip").forEach((ch) => ch.classList.remove("selected"));
+        await fetchSummary();
+      } catch (err) {
+        console.error(err);
+        setLogStatus("Error logging expense", true);
+      } finally {
+        logBtn.disabled = false;
+      }
+    }
+
+    // Emotion chips
+    document.querySelectorAll(".chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const val = chip.getAttribute("data-emotion");
+        if (selectedEmotion === val) {
+          selectedEmotion = null;
+          chip.classList.remove("selected");
+        } else {
+          selectedEmotion = val;
+          document.querySelectorAll(".chip").forEach((c) => c.classList.remove("selected"));
+          chip.classList.add("selected");
+        }
+      });
+    });
+
+    // Log button
+    logBtn.addEventListener("click", logExpense);
+
+    // Enter to log
+    expenseInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        logExpense();
+      }
+    });
+
+    // Placeholder mic button – can later wire to /api/stt -> /api/finance/log
+    micBtn.addEventListener("click", () => {
+      isRecording = !isRecording;
+      micBtn.classList.toggle("active", isRecording);
+      setLogStatus(isRecording ? "Listening (stub)" : "Idle");
+    });
+
+    // API key change → refetch with new auth
+    apiKeyInput.addEventListener("change", () => {
+      fetchSummary();
+    });
+
+    // Initial load
+    fetchSummary();
+  </script>
+</body>
+</html>

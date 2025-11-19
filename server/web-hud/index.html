@@ -375,6 +375,7 @@
         </label>
         <button id="toggleThemeBtn">Toggle Theme</button>
         <button id="openDocsBtn">Open API docs</button>
+        <button id="openFinanceBtn">Finance</button>
       </div>
     </header>
 
@@ -824,6 +825,9 @@
     };
     $("openDocsBtn").onclick = () => {
       window.open("/docs", "_blank");
+    };
+    $("openFinanceBtn").onclick = () => {
+      window.open("/finance", "_blank");
     };
     $("refreshCardBtn").onclick = loadCurrentCard;
     $("saveReflectionBtn").onclick = saveReflection;
