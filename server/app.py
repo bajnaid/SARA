@@ -132,6 +132,23 @@ def _ensure_db() -> None:
             """
         )
         con.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, created_at)")
+        # Transactions table for finance tracking
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT DEFAULT 'default',
+                created_at TEXT NOT NULL,
+                amount_cents INTEGER NOT NULL,
+                currency TEXT NOT NULL,
+                merchant TEXT,
+                raw_input TEXT NOT NULL,
+                category TEXT,
+                emotion TEXT,
+                notes TEXT
+            )
+            """
+        )
         con.commit()
     finally:
         con.close()
@@ -273,6 +290,76 @@ def _delete_conversation(conversation_id: int) -> None:
     finally:
         con.close()
 
+
+# -------------------------------------------------------------------
+# Finance helpers (transactions + parsing)
+# -------------------------------------------------------------------
+
+_FINANCE_SYSTEM_PROMPT = """
+You are a transaction parser for a personal finance assistant.
+
+Input: a short text like "record $3 espresso at Mike's yesterday"
+or "I spent 20 SAR on Uber".
+
+Output: a single JSON object with:
+- amount: float
+- currency: 3-letter code (USD, SAR, EUR). Default to USD if not specified.
+- merchant: short string (e.g., "Mike's", "Uber", "Bodega")
+- category: one of [coffee, food, groceries, transport, subscriptions, shopping, bills, rent, fun, other]
+- created_at_iso: ISO8601 timestamp in the user's local time. If they say "yesterday" or "last week", infer date.
+- notes: short free-text note if needed.
+
+If something is ambiguous, make a best guess.
+Always return VALID JSON only, no extra text.
+"""
+
+
+def _parse_transaction_input(user_text: str) -> dict:
+    """Use OpenAI to turn natural text into a structured transaction dict."""
+    try:
+        resp = _oai.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            temperature=0,
+            messages=[
+                {"role": "system", "content": _FINANCE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_text},
+            ],
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        data = json.loads(content or "{}")
+    except Exception:
+        logging.exception("finance parse failed; falling back to simple parse")
+        # ultra-dumb fallback: try to extract first number
+        data = {}
+        tokens = user_text.replace("$", " ").split()
+        amount = 0.0
+        for t in tokens:
+            try:
+                amount = float(t)
+                break
+            except Exception:
+                continue
+        data.setdefault("amount", amount or 0.0)
+        data.setdefault("currency", "USD")
+        data.setdefault("merchant", "")
+        data.setdefault("category", "other")
+        data.setdefault("created_at_iso", datetime.now(timezone.utc).isoformat())
+        data.setdefault("notes", "")
+
+    # Hard fallbacks / normalization
+    if "amount" not in data:
+        data["amount"] = 0.0
+    if "currency" not in data or not data["currency"]:
+        data["currency"] = "USD"
+    if "created_at_iso" not in data or not data["created_at_iso"]:
+        data["created_at_iso"] = datetime.now(timezone.utc).isoformat()
+    if "category" not in data or not data["category"]:
+        data["category"] = "other"
+    if "notes" not in data:
+        data["notes"] = ""
+
+    return data
 
 # -------------------------------------------------------------------
 # Auth helper
@@ -569,6 +656,202 @@ def api_daily_summary(limit_messages: int = 40, limit_reflections: int = 20, aut
         raise HTTPException(500, f"Summary error: {e}")
 
     return {"ok": True, "summary": summary}
+
+
+# ------------------- Finance API (v0.1) -------------------
+
+@app.post("/api/finance/log")
+def api_finance_log(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+    """Log an expense in natural language.
+
+    Payload example:
+      { "text": "record $3 espresso at Mike's", "emotion": "tired" }
+    """
+    _require_api_key(authorization)
+    _ensure_db()
+
+    text = (payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "text required")
+
+    emotion = (payload.get("emotion") or "").strip() or None
+
+    try:
+        parsed = _parse_transaction_input(text)
+    except Exception as e:
+        logging.exception("finance parse error")
+        raise HTTPException(500, f"parse error: {e}")
+
+    try:
+        amount = float(parsed.get("amount", 0.0))
+    except Exception:
+        amount = 0.0
+
+    amount_cents = int(round(amount * 100))
+    currency = str(parsed.get("currency", "USD")).upper()
+    merchant = (parsed.get("merchant") or "").strip() or None
+    category = (parsed.get("category") or "other").strip() or "other"
+    created_at_iso = str(parsed.get("created_at_iso") or datetime.now(timezone.utc).isoformat())
+    notes = (parsed.get("notes") or "").strip() or None
+
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+        cur.execute(
+            """
+            INSERT INTO transactions (
+                user_id, created_at, amount_cents, currency,
+                merchant, raw_input, category, emotion, notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "default",
+                created_at_iso,
+                amount_cents,
+                currency,
+                merchant,
+                text,
+                category,
+                emotion,
+                notes,
+            ),
+        )
+        con.commit()
+        tx_id = cur.lastrowid
+        row = con.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,)).fetchone()
+    finally:
+        con.close()
+
+    return {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "amount": row["amount_cents"] / 100.0,
+        "currency": row["currency"],
+        "merchant": row["merchant"],
+        "category": row["category"],
+        "raw_input": row["raw_input"],
+        "emotion": row["emotion"],
+        "notes": row["notes"],
+    }
+
+
+@app.get("/api/finance/today")
+def api_finance_today(authorization: Optional[str] = Header(None)):
+    """List today's transactions for the default user."""
+    _require_api_key(authorization)
+    _ensure_db()
+
+    today = datetime.now().date()
+    start = datetime.combine(today, datetime.min.time()).isoformat()
+    end = datetime.combine(today, datetime.max.time()).isoformat()
+
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT * FROM transactions
+            WHERE user_id = ? AND created_at BETWEEN ? AND ?
+            ORDER BY created_at DESC
+            """,
+            ("default", start, end),
+        ).fetchall()
+    finally:
+        con.close()
+
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "id": row["id"],
+                "created_at": row["created_at"],
+                "amount": row["amount_cents"] / 100.0,
+                "currency": row["currency"],
+                "merchant": row["merchant"],
+                "category": row["category"],
+                "raw_input": row["raw_input"],
+                "emotion": row["emotion"],
+                "notes": row["notes"],
+            }
+        )
+    return items
+
+
+@app.get("/api/finance/summary/daily")
+def api_finance_summary_daily(authorization: Optional[str] = Header(None)):
+    """Daily finance summary: total, by category, coffee, and a small insight."""
+    _require_api_key(authorization)
+    _ensure_db()
+
+    today = datetime.now().date()
+    start = datetime.combine(today, datetime.min.time())
+    end = datetime.combine(today, datetime.max.time())
+
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT * FROM transactions
+            WHERE user_id = ? AND created_at BETWEEN ? AND ?
+            """,
+            ("default", start.isoformat(), end.isoformat()),
+        ).fetchall()
+    finally:
+        con.close()
+
+    if not rows:
+        return {
+            "period": "today",
+            "from_date": start.isoformat(),
+            "to_date": end.isoformat(),
+            "total_spent": 0.0,
+            "currency": "USD",
+            "by_category": {},
+            "coffee_spent": 0.0,
+            "transaction_count": 0,
+            "insight": "No spending logged yet. Try adding one thing, even if it's tiny.",
+        }
+
+    total_cents = 0
+    currency = rows[0]["currency"]
+    by_category: dict[str, int] = {}
+    coffee_cents = 0
+
+    for row in rows:
+        c = int(row["amount_cents"])
+        total_cents += c
+        cat = (row["category"] or "other").lower()
+        by_category[cat] = by_category.get(cat, 0) + c
+        if cat == "coffee":
+            coffee_cents += c
+
+    total = total_cents / 100.0
+    coffee = coffee_cents / 100.0
+    cats_float = {k: v / 100.0 for k, v in by_category.items()}
+
+    if coffee > 0 and total > 0:
+        ratio = coffee / total
+        if ratio > 0.3:
+            insight = f"Coffee is {ratio:.0%} of your spending today. Are these rushed days or intentional rituals?"
+        else:
+            insight = "Your coffee spending is present but not dominating today."
+    else:
+        insight = "No coffee logged today. How are your energy rituals showing up instead?"
+
+    return {
+        "period": "today",
+        "from_date": start.isoformat(),
+        "to_date": end.isoformat(),
+        "total_spent": total,
+        "currency": currency,
+        "by_category": cats_float,
+        "coffee_spent": coffee,
+        "transaction_count": len(rows),
+        "insight": insight,
+    }
 
 @app.get("/api/conversations")
 def api_list_conversations(limit: int = 20, authorization: Optional[str] = Header(None)):
