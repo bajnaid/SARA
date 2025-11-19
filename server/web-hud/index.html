@@ -1,899 +1,884 @@
-<!doctype html>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>SARA HUD</title>
-
-<style>
-  :root { font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-  body { margin: 24px; max-width: 980px; transition: background .2s, color .2s; }
-  h1 { margin: 0 0 8px; }
-  .topbar { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom: 16px; }
-  .muted { color: #666; }
-  .row { display: flex; gap: 24px; flex-wrap: wrap; }
-  .col { flex: 1 1 460px; min-width: 320px; }
-  pre, textarea, input { width: 100%; box-sizing: border-box; }
-  pre { background:#0b1020; color:#cde3ff; padding:12px; border-radius:8px; overflow:auto; min-height:140px; }
-  textarea { min-height:140px; padding:12px; border-radius:8px; border:1px solid #ddd; font: inherit; }
-  .controls { display:flex; gap:12px; align-items:center; margin-top:10px; flex-wrap: wrap; }
-  .mic-btn { width:56px; height:56px; border-radius:50%; background:#1b2230; color:#fff; border:1px solid #2a3342; display:inline-flex; align-items:center; justify-content:center; font-size:22px; cursor:pointer; }
-  .mic-btn.recording { background:#e53935; border-color:#b71c1c; }
-  button { padding:10px 14px; border-radius:8px; border:0; cursor:pointer; font: inherit; }
-  button.primary { background:#2b7fff; color:#fff; }
-  button.secondary { background:#eee; }
-  button[disabled] { opacity:.6; cursor:not-allowed; }
-  .ok { color:#0b8f39; }
-  .err { color:#b00020; }
-  small.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .flash { animation: flash 1.2s ease-out 1; }
-  .nowrap { white-space: nowrap; }
-  .inline { display:inline-flex; gap:8px; align-items:center; }
-  /* keep the TTS audio element from affecting layout */
-  .sr-audio { position:absolute; width:0; height:0; opacity:0; pointer-events:none; }
-  @keyframes flash { 0%{opacity:0} 20%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
-
-  /* Dark theme */
-  .dark body { background:#0b0e14; color:#e6e6e6; }
-  .dark .muted { color:#9aa1ad; }
-  .dark textarea { background:#0f131a; color:#e6e6e6; border-color:#2a3342; }
-  .dark .secondary { background:#1b2230; color:#e6e6e6; }
-</style>
-
-<!-- One-time init overlay to unlock audio + request mic -->
-<div id="initOverlay" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.82);z-index:9999;">
-  <div style="background:#111;border:1px solid #333;padding:20px 24px;border-radius:12px;min-width:320px;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.35);">
-    <h2 style="margin:0 0 10px">SARA is ready</h2>
-    <p style="opacity:.8;margin:0 0 16px">Click start to enable audio and microphone access.</p>
-    <button id="startSaraBtn" style="padding:10px 14px;border-radius:10px;border:1px solid #444;background:#1e1e1e;color:#e6e6e6;cursor:pointer">
-      ▶ Start SARA
-    </button>
-  </div>
-</div>
-
-<!-- ===== SARA: Auto Speak toggle + Conversations sidebar (v0.2) ===== -->
-<div id="sara-controls" style="margin-top:12px; display:flex; gap:16px; align-items:center;">
-  <label style="display:inline-flex;gap:6px;align-items:center;">
-    <input type="checkbox" id="autoSpeak" checked />
-    🔊 Auto speak
-  </label>
-</div>
-
-<div id="sara-layout" style="display:flex; gap:16px; margin-top:16px;">
-  <aside id="convPane" style="width:280px; max-height:60vh; overflow:auto; border:1px solid var(--border,#ddd); border-radius:10px; padding:10px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-      <strong>Conversations</strong>
-      <button id="newChatBtn" title="Start a new chat">＋ New</button>
-    </div>
-    <ul id="convList" style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:6px;"></ul>
-  </aside>
-
-  <section style="flex:1; min-height:200px;">
-    <div id="chatLog" style="display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid var(--border,#ddd); border-radius:10px; max-height:60vh; overflow:auto;">
-      <!-- Chat messages will render here -->
-    </div>
-  </section>
-</div>
-<!-- ===== /SARA additions ===== -->
-<script>
-// ===== SARA v0.2: Auto-speak via /api/speak + Conversation sidebar =====
-(function(){
-  // Reuse API_BASE and bearerHeaders() from earlier scripts
-  const API_BASE = window.location.origin;
-
-  let conversationId = null;
-
-  const autoSpeakEl = document.getElementById("autoSpeak");
-  const convListEl = document.getElementById("convList");
-  const newChatBtn = document.getElementById("newChatBtn");
-  const chatLogEl  = document.getElementById("chatLog");
-  const audioEl    = document.getElementById("ttsAudio"); // existing hidden audio element
-
-  function renderMessage(role, text){
-    const wrap = document.createElement("div");
-    wrap.style.display = "flex";
-    wrap.style.gap = "8px";
-    wrap.style.alignItems = "flex-start";
-
-    const bubble = document.createElement("div");
-    bubble.style.padding = "8px 10px";
-    bubble.style.borderRadius = "10px";
-    bubble.style.maxWidth = "90%";
-    bubble.style.whiteSpace = "pre-wrap";
-    bubble.style.border = "1px solid var(--border,#ddd)";
-    bubble.textContent = text;
-
-    if (role === "user") {
-      wrap.style.justifyContent = "flex-end";
-      bubble.style.background = "var(--user-bubble,#eef6ff)";
-    } else {
-      wrap.style.justifyContent = "flex-start";
-      bubble.style.background = "var(--assistant-bubble,#f7f7f7)";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SARA HUD</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #05060a;
+      --bg-alt: #0c0f18;
+      --bg-elevated: #101320;
+      --fg: #f5f7ff;
+      --fg-muted: #9aa2c0;
+      --accent: #4f8cff;
+      --accent-soft: rgba(79, 140, 255, 0.14);
+      --border-subtle: #202436;
+      --danger: #ff4760;
+      --radius-lg: 14px;
+      --radius-md: 10px;
+      --radius-pill: 999px;
+      --shadow-soft: 0 20px 45px rgba(0, 0, 0, 0.45);
+      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "Helvetica Neue", sans-serif;
     }
 
-    wrap.appendChild(bubble);
-    chatLogEl.appendChild(wrap);
-    chatLogEl.scrollTop = chatLogEl.scrollHeight;
-  }
-
-  async function loadConversations(){
-    if (!convListEl) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/conversations`, { headers: bearerHeaders() });
-      const j = await res.json();
-      convListEl.innerHTML = "";
-      (j.items || []).forEach(c => {
-        const li = document.createElement("li");
-        const btn = document.createElement("button");
-        btn.textContent = `${c.title || "(untitled)"} · ${new Date(c.created_at).toLocaleString()}`.slice(0, 80);
-        btn.style.width = "100%";
-        btn.style.textAlign = "left";
-        btn.onclick = () => openConversation(c.id);
-        li.appendChild(btn);
-        convListEl.appendChild(li);
-      });
-    } catch(e) {
-      console.warn("loadConversations failed", e);
+    * {
+      box-sizing: border-box;
     }
-  }
-
-  async function openConversation(id){
-    conversationId = id;
-    if (chatLogEl) chatLogEl.innerHTML = "";
-    try {
-      const res = await fetch(`${API_BASE}/api/conversations/${id}`, { headers: bearerHeaders() });
-      const j = await res.json();
-      (j.items || []).forEach(m => renderMessage(m.role, m.text));
-    } catch(e) {
-      console.warn("openConversation failed", e);
+    body {
+      margin: 0;
+      font-family: var(--font-sans);
+      background: radial-gradient(circle at top, #15192a 0, #05060a 45%, #000 100%);
+      color: var(--fg);
+      min-height: 100vh;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
     }
-  }
+    body.light {
+      --bg: #f5f7ff;
+      --bg-alt: #eef1ff;
+      --bg-elevated: #ffffff;
+      --fg: #070816;
+      --fg-muted: #6c708b;
+      --accent-soft: rgba(79, 140, 255, 0.12);
+      --border-subtle: #d2d6f0;
+      background: radial-gradient(circle at top, #ffffff 0, #eef1ff 40%, #e2e6ff 100%);
+    }
 
-  async function sendChat(text){
-    if (!text) return;
-    renderMessage("user", text);
+    .shell {
+      width: 100%;
+      max-width: 1200px;
+      padding: 20px 24px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
 
-    // Auto-speak path uses /api/speak which returns audio + headers
-    if (autoSpeakEl && autoSpeakEl.checked) {
-      const res = await fetch(`${API_BASE}/api/speak`, {
-        method: "POST",
-        headers: { ...bearerHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ text, conversation_id: conversationId, voice: "alloy" })
-      });
-      if (!res.ok) {
-        renderMessage("assistant", `TTS failed (${res.status}).`);
-        return;
-      }
-      const cid = res.headers.get("X-Conversation-Id");
-      if (cid) conversationId = parseInt(cid, 10);
-      const replyB64 = res.headers.get("X-Reply-Text-B64");
-      let replyText = "(speech)";
-      if (replyB64) { try { replyText = atob(replyB64); } catch{} }
-      renderMessage("assistant", replyText);
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .identity {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo-pill {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      background: radial-gradient(circle at 20% 0, #7be3ff, #4f8cff 40%, #914bff 80%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 17px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+    .identity-main {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .identity-title {
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 11px;
+      color: var(--fg-muted);
+    }
+    .identity-name {
+      font-size: 14px;
+    }
 
-      // Play audio
-      const blob = await res.blob();
-      if (audioEl) {
-        const url = URL.createObjectURL(blob);
-        audioEl.src = url;
-        try { await audioEl.play(); } catch {}
-      }
-    } else {
-      // Text-only /api/chat path
-      const res = await fetch(`${API_BASE}/api/chat`, {
-        method: "POST",
-        headers: { ...bearerHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ text, conversation_id: conversationId })
-      });
-      const j = await res.json();
-      if (j.ok) {
-        conversationId = j.conversation_id || conversationId;
-        renderMessage("assistant", j.reply || "(no reply)");
-      } else {
-        renderMessage("assistant", "Chat failed.");
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    button, .btn {
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--border-subtle);
+      background: linear-gradient(135deg, #141827, #0b0e19);
+      color: var(--fg);
+      font-size: 13px;
+      padding: 7px 13px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      outline: none;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+      transition: background 0.13s ease, transform 0.12s ease,
+        box-shadow 0.13s ease, border-color 0.13s ease;
+    }
+    body.light button {
+      background: linear-gradient(135deg, #ffffff, #edf0ff);
+      box-shadow: 0 4px 14px rgba(20, 27, 70, 0.15);
+    }
+    button:hover {
+      transform: translateY(-1px);
+      border-color: var(--accent);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+    }
+    button:active {
+      transform: translateY(0);
+      box-shadow: 0 6px 26px rgba(0, 0, 0, 0.45);
+    }
+
+    .chip-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--border-subtle);
+      background: rgba(5, 7, 15, 0.3);
+      padding: 4px 9px;
+      font-size: 11px;
+      color: var(--fg-muted);
+    }
+    body.light .chip-toggle {
+      background: rgba(255, 255, 255, 0.8);
+    }
+    .chip-toggle input {
+      margin: 0;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+    @media (max-width: 900px) {
+      .layout {
+        grid-template-columns: 1fr;
       }
     }
 
-    // refresh sidebar order
-    loadConversations();
-  }
+    .panel {
+      border-radius: var(--radius-lg);
+      background: radial-gradient(circle at top left, #1c2240 0, var(--bg-elevated) 45%);
+      border: 1px solid var(--border-subtle);
+      padding: 14px 14px 16px;
+      box-shadow: var(--shadow-soft);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+    }
+    body.light .panel {
+      background: linear-gradient(145deg, #ffffff 0, #f2f4ff 40%);
+      box-shadow: 0 10px 30px rgba(31, 41, 88, 0.18);
+    }
 
-  // Wire the existing Ask SARA button to sendChat() so replies auto-speak + persist
-  const askBtn = document.getElementById("askBtn");
-  const inputEl = document.getElementById("reflectText");
-  if (askBtn && inputEl) {
-    askBtn.onclick = () => {
-      const t = (inputEl.value || "").trim();
-      if (!t) return;
-      inputEl.value = "";
-      sendChat(t);
-    };
-  }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 2px;
+    }
+    .panel-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--fg-muted);
+    }
+    .panel-sub {
+      font-size: 11px;
+      color: var(--fg-muted);
+    }
 
-  // New chat button clears the panel and starts fresh conversation on next send
-  if (newChatBtn) {
-    newChatBtn.onclick = () => {
-      conversationId = null;
-      if (chatLogEl) chatLogEl.innerHTML = "";
-    };
-  }
+    .conversation-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .conversation-item {
+      border-radius: var(--radius-md);
+      padding: 7px 9px;
+      font-size: 12px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      background: rgba(10, 13, 26, 0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .conversation-item:hover {
+      border-color: var(--accent-soft);
+      background: rgba(20, 32, 70, 0.7);
+    }
+    .conversation-item.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .conversation-title {
+      font-weight: 500;
+      font-size: 12px;
+    }
+    .conversation-meta {
+      font-size: 10px;
+      color: var(--fg-muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .conversation-last {
+      font-size: 11px;
+      color: var(--fg-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
 
-  // Initial sidebar load
-  loadConversations();
-})();
-// ===== /SARA v0.2 =====
-</script>
+    .field-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
 
-<div class="topbar">
-  <div>
-    <h1>SARA HUD</h1>
-    <p class="muted">Talking to <span id="base"></span></p>
-  </div>
-  <div class="controls">
-    <button id="theme" class="secondary" title="Toggle light/dark">Toggle Theme</button>
-    <a class="secondary" href="/docs" style="padding:10px 14px; border-radius:8px; text-decoration:none; display:inline-block;">Open API docs</a>
-  </div>
-</div>
+    textarea, input[type="text"], input[type="password"] {
+      width: 100%;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      background: rgba(4, 6, 18, 0.85);
+      color: var(--fg);
+      padding: 8px 9px;
+      font-size: 13px;
+      resize: vertical;
+      min-height: 70px;
+      outline: none;
+    }
+    body.light textarea,
+    body.light input[type="text"],
+    body.light input[type="password"] {
+      background: rgba(255, 255, 255, 0.95);
+    }
+    textarea:focus,
+    input[type="text"]:focus,
+    input[type="password"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(79, 140, 255, 0.3);
+    }
 
-<div class="row">
-  <div class="col">
-    <h2>Current Card</h2>
-    <pre id="card">Loading…</pre>
-    <div class="controls">
-      <button id="refresh" class="secondary" title="Cmd/Ctrl + Shift + R">Refresh</button>
-      <small class="muted">Shortcut: <span class="mono">Cmd/Ctrl + Shift + R</span></small>
-    </div>
-  </div>
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .row-right {
+      margin-left: auto;
+    }
 
-  <div class="col">
-    <h2>New Reflection</h2>
-    <label for="reflectText" class="muted">What’s on your mind?</label>
-    <textarea id="reflectText" placeholder="Type a quick note…  (Cmd/Ctrl + Enter to save)" autofocus></textarea>
+    .badge-soft {
+      font-size: 10px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: rgba(15, 170, 110, 0.12);
+      color: #8bf1c7;
+      border: 1px solid rgba(44, 189, 132, 0.4);
+    }
 
-    <div class="controls">
-      <button class="primary" id="save">Save Reflection</button>
-      <span id="status" class="muted"></span>
-    </div>
-    <!-- buttons row -->
-    <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-      <button id="micBtn" class="mic-btn" title="Tap to talk">🎙️</button>
-      <button id="askBtn" class="secondary" title="Send the text above to SARA and hear the reply">🤖 Ask SARA</button>
-      <label class="inline nowrap">
-        <input type="checkbox" id="autoListen" />
-        <span>Auto‑listen (beta)</span>
-      </label>
-      <div class="inline" style="align-items:center;gap:6px;">
-        <span style="font-size:12px;opacity:.7;">level</span>
-        <div id="vu" style="width:120px;height:8px;background:#111;border:1px solid #333;border-radius:999px;overflow:hidden;">
-          <div id="vuFill" style="height:100%;width:0%;background:#4ade80;"></div>
+    .audio-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+
+    .mic-button {
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: radial-gradient(circle at 20% 0, #ff9f9f, #ff4b6a 45%, #7a1434 85%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7);
+      transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+    }
+    .mic-button span {
+      font-size: 16px;
+    }
+    .mic-button.recording {
+      transform: translateY(1px) scale(0.97);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.7);
+      border-color: var(--danger);
+    }
+
+    .checkbox-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: var(--fg-muted);
+    }
+
+    .pre-block {
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      background: rgba(4, 7, 18, 0.9);
+      color: var(--fg);
+      font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono",
+        "Courier New", monospace;
+      font-size: 11px;
+      padding: 9px 10px;
+      white-space: pre-wrap;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    body.light .pre-block {
+      background: rgba(255, 255, 255, 0.95);
+    }
+
+    .footer-row {
+      font-size: 10px;
+      color: var(--fg-muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      margin-top: 4px;
+      opacity: 0.9;
+    }
+  </style>
+</head>
+<body class="dark">
+  <div class="shell">
+    <header class="topbar">
+      <div class="identity">
+        <div class="logo-pill">S</div>
+        <div class="identity-main">
+          <div class="identity-title">S.A.R.A. HUD</div>
+          <div class="identity-name">api.saralabs.xyz</div>
         </div>
       </div>
-      <audio id="ttsAudio" class="sr-audio"></audio>
-    </div>
-
-    <details style="margin-top:10px;">
-      <summary>Advanced: API key (optional)</summary>
-      <label for="apiKey">API_KEY for /api/reflect (Bearer):</label>
-      <input id="apiKey" type="password" placeholder="Leave blank if your endpoint is open" />
-      <div class="controls">
-        <button id="saveKey" class="secondary">Save key (local)</button>
-        <button id="clearKey" class="secondary">Clear key</button>
-        <span id="keyStatus" class="muted"></span>
+      <div class="topbar-actions">
+        <label class="chip-toggle">
+          <input type="checkbox" id="autoSpeakToggle" checked />
+          <span>Auto speak</span>
+        </label>
+        <button id="toggleThemeBtn">Toggle Theme</button>
+        <button id="openDocsBtn">Open API docs</button>
       </div>
-      <small class="mono muted">Key is stored only in this browser (localStorage).</small>
-    </details>
+    </header>
 
-    <h3 style="margin-top:16px;">Last result</h3>
-    <pre id="result">—</pre>
+    <main class="layout">
+      <!-- LEFT: Conversations + advanced -->
+      <aside class="panel">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Conversations</div>
+            <div class="panel-sub">Latest chats (persisted in SQLite)</div>
+          </div>
+          <button id="newConversationBtn" style="padding:5px 10px;font-size:12px;">+ New</button>
+        </div>
+
+        <ul id="conversationList" class="conversation-list"></ul>
+
+        <div class="field-stack">
+          <label style="font-size:11px;color:var(--fg-muted);">
+            Search (local only)
+          </label>
+          <input
+            type="text"
+            id="conversationSearch"
+            placeholder="Filter by title or last message…"
+            style="min-height:auto;"
+          />
+        </div>
+
+        <div class="field-stack" style="margin-top:10px;">
+          <label style="font-size:11px;color:var(--fg-muted);">
+            API key (optional)
+          </label>
+          <input
+            type="password"
+            id="apiKeyInput"
+            placeholder="Bearer key if ENFORCE_API_KEY=true"
+            style="min-height:auto;"
+          />
+        </div>
+
+        <div class="footer-row">
+          <span id="hudStatus">Idle</span>
+          <span id="convHint">Click a conversation or start a new one.</span>
+        </div>
+      </aside>
+
+      <!-- RIGHT: Current card + reflection + voice -->
+      <section class="panel">
+        <!-- Current card -->
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Current Card</div>
+            <div class="panel-sub">Composed by your backend AI coach service</div>
+          </div>
+          <button id="refreshCardBtn" style="font-size:11px;padding:5px 10px;">
+            Refresh
+          </button>
+        </div>
+        <pre id="currentCard" class="pre-block">Loading…</pre>
+
+        <!-- Reflection / chat -->
+        <div class="field-stack">
+          <label style="font-size:11px;color:var(--fg-muted);">
+            What’s on your mind?
+            <span style="opacity:0.8;">(Cmd/Ctrl + Enter to ask)</span>
+          </label>
+          <textarea
+            id="reflectionInput"
+            placeholder="Type a quick note or question to S.A.R.A.…"
+          ></textarea>
+        </div>
+
+        <div class="row" style="margin-top:4px;">
+          <button id="saveReflectionBtn">Save Reflection</button>
+          <button id="askSaraBtn">Ask SARA</button>
+          <span class="badge-soft">v0.2 · text + voice</span>
+          <div class="row-right audio-controls">
+            <div id="micButton" class="mic-button" title="Click to start/stop recording">
+              <span id="micIcon">🎙</span>
+            </div>
+            <label class="checkbox-inline">
+              <input type="checkbox" id="autoListenToggle" />
+              <span>Auto-listen (beta)</span>
+            </label>
+            <label class="checkbox-inline">
+              <input type="checkbox" id="wakeWordToggle" />
+              <span>Wake word: “Hey SARA”</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field-stack" style="margin-top:10px;">
+          <label style="font-size:11px;color:var(--fg-muted);">Last result</label>
+          <pre id="lastResult" class="pre-block">_</pre>
+        </div>
+
+        <div class="footer-row">
+          <span id="voiceStatus">Voice: idle</span>
+          <span id="summaryHint">
+            Tip: hit /api/dailySummary later for a day recap.
+          </span>
+        </div>
+      </section>
+    </main>
   </div>
-</div>
 
-<script>
-  // ---------- Config ----------
-  const API_BASE = window.location.origin;
-  document.getElementById('base').textContent = API_BASE;
+  <script>
+    // --- Helpers ---
+    const apiBase = ""; // same origin (api.saralabs.xyz or onrender)
+    const $ = (id) => document.getElementById(id);
 
-  // Theme
-  const root = document.documentElement;
-  const savedTheme = localStorage.getItem('SARA_THEME');
-  if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-    document.documentElement.classList.add('dark');
-  }
-  document.getElementById('theme').onclick = () => {
-    document.documentElement.classList.toggle('dark');
-    localStorage.setItem('SARA_THEME', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
-  };
-
-  // Key management (optional)
-  const keyInput = document.getElementById('apiKey');
-  const keyStatus = document.getElementById('keyStatus');
-  keyInput.value = localStorage.getItem('SARA_API_KEY') || '';
-  const bearerHeaders = () => {
-    const headers = { 'Content-Type': 'application/json' };
-    const k = (localStorage.getItem('SARA_API_KEY') || '').trim();
-    if (k) headers['Authorization'] = 'Bearer ' + k;
-    return headers;
-  };
-  document.getElementById('saveKey').onclick = () => {
-    localStorage.setItem('SARA_API_KEY', keyInput.value || '');
-    keyStatus.textContent = 'Key saved';
-    setTimeout(()=> keyStatus.textContent = '', 1200);
-  };
-  document.getElementById('clearKey').onclick = () => {
-    localStorage.removeItem('SARA_API_KEY');
-    keyInput.value = '';
-    keyStatus.textContent = 'Key cleared';
-    setTimeout(()=> keyStatus.textContent = '', 1200);
-  };
-
-  // ---------- API ----------
-  async function loadCard() {
-    const out = document.getElementById('card');
-    out.textContent = 'Loading…';
-    try {
-      const r = await fetch(`${API_BASE}/api/currentCard`, {
-        headers: { 'Accept': 'application/json' }
-      });
-      const ct = (r.headers.get('content-type') || '').toLowerCase();
-      if (!r.ok) {
-        const body = await r.text();
-        throw new Error(`HTTP ${r.status} on /api/currentCard — ${body.slice(0,200)}`);
-      }
-      if (ct.includes('application/json')) {
-        const j = await r.json();
-        out.textContent = JSON.stringify(j, null, 2);
-      } else {
-        const t = await r.text();
-        throw new Error(`Expected JSON, got ${ct || 'unknown content-type'} — ${t.slice(0,200)}`);
-      }
-    } catch (e) {
-      out.textContent = String(e);
-    }
-  }
-
-  async function saveReflection() {
-    const status = document.getElementById('status');
-    const result = document.getElementById('result');
-    const saveBtn = document.getElementById('save');
-    const textEl = document.getElementById('reflectText');
-    const text = textEl.value.trim();
-
-    if (!text) {
-      status.textContent = 'Please type something first.';
-      status.className = 'err';
-      return;
+    function buildHeaders(json = true) {
+      const headers = {};
+      if (json) headers["Content-Type"] = "application/json";
+      const key = $("apiKeyInput").value.trim();
+      if (key) headers["Authorization"] = "Bearer " + key;
+      return headers;
     }
 
-    // disable while saving
-    saveBtn.disabled = true;
-    status.textContent = 'Saving…';
-    status.className = 'muted';
-
-    try {
-      const r = await fetch(`${API_BASE}/api/reflect`, {
-        method: 'POST',
-        headers: bearerHeaders(),
-        body: JSON.stringify({ text })
-      });
-      const ct = (r.headers.get('content-type') || '').toLowerCase();
-      if (!r.ok) {
-        const body = await r.text();
-        throw new Error(`HTTP ${r.status} on /api/reflect — ${body.slice(0,200)}`);
-      }
-      let j;
-      if (ct.includes('application/json')) {
-        j = await r.json();
-      } else {
-        const t = await r.text();
-        throw new Error(`Expected JSON, got ${ct || 'unknown content-type'} — ${t.slice(0,200)}`);
-      }
-      result.textContent = j.summary || "Saved.";
-
-      if (j.ok) {
-        status.textContent = 'Saved ✓';
-        status.className = 'ok flash';
-        textEl.value = '';
-        loadCard();
-      } else {
-        status.textContent = j.error || 'Failed';
-        status.className = 'err';
-      }
-    } catch (e) {
-      status.textContent = String(e);
-      status.className = 'err';
-    } finally {
-      // Re-enable & remove flash after it completes
-      saveBtn.disabled = false;
-      setTimeout(() => status.classList.remove('flash'), 1200);
+    function setHudStatus(text) {
+      $("hudStatus").textContent = text;
     }
-  }
-
-  // ---------- Wiring & Shortcuts ----------
-  document.getElementById('refresh').onclick = loadCard;
-  document.getElementById('save').onclick = saveReflection;
-
-  const input = document.getElementById('reflectText');
-  input.addEventListener('keydown', (e) => {
-    // Save: Cmd/Ctrl + Enter
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
-      saveReflection();
+    function setVoiceStatus(text) {
+      $("voiceStatus").textContent = "Voice: " + text;
     }
-    // Ask SARA: Shift + Enter
-    if (e.shiftKey && e.key === 'Enter') {
-      e.preventDefault();
-      // call askSara if it exists (defined in later script)
-      if (typeof askSara === 'function') askSara();
+    function setLastResult(text) {
+      $("lastResult").textContent = text || "_";
     }
-    // Clear: Esc
-    if (e.key === 'Escape') {
-      input.value = '';
-    }
-  });
 
-  // Global: Refresh card with Cmd/Ctrl + Shift + R (avoids browser Cmd+R)
-  document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key.toLowerCase() === 'r')) {
-      e.preventDefault();
-      loadCard();
-    }
-  });
+    let currentConversationId = null;
+    let conversationsCache = [];
 
-  // Focus the textbox on load (autofocus attribute is a hint; do it explicitly too)
-  window.addEventListener('load', () => { input.focus(); input.selectionStart = input.selectionEnd = input.value.length; });
-
-  // Initial load
-  loadCard();
-</script>
-<script>
-async function speakText(text) {
-  const apiKey = (localStorage.getItem('SARA_API_KEY') || '').trim();
-  const res = await fetch(`${API_BASE}/api/tts`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {})
-    },
-    body: JSON.stringify({ text, voice: "alloy" })
-  });
-  if (!res.ok) {
-    const err = await res.text().catch(()=>res.statusText);
-    throw new Error(`TTS failed: ${res.status} ${err}`);
-  }
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const audio = document.getElementById("ttsAudio");
-  audio.src = url;
-  await audio.play();
-}
-
-async function chatAndGetReply(text) {
-  const apiKey = (localStorage.getItem('SARA_API_KEY') || '').trim();
-  const res = await fetch(`${API_BASE}/api/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {})
-    },
-    body: JSON.stringify({ text })
-  });
-  if (!res.ok) {
-    const err = await res.text().catch(()=>res.statusText);
-    throw new Error(`Chat failed: ${res.status} ${err}`);
-  }
-  const j = await res.json();
-  if (!j || !j.ok || !j.reply) {
-    throw new Error("Chat failed: empty reply");
-  }
-  return j.reply;
-}
-
-// --- One-time init overlay: unlock audio, pre-warm mic, greet
-let audioEl = document.getElementById("ttsAudio");
-// If the element was removed, recreate a hidden one:
-if (!audioEl) {
-  audioEl = document.createElement("audio");
-  audioEl.id = "ttsAudio";
-  audioEl.style.display = "none";
-  document.body.appendChild(audioEl);
-}
-
-// Keep a shared stream so subsequent recordings start immediately
-let micReady = false;
-
-async function initSara() {
-  // 1) unlock audio with a very short silent buffer (satisfies autoplay policies)
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const buf = ctx.createBuffer(1, 1, 22050);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    src.start(0);
-  } catch {}
-
-  // 2) ask for mic once and keep the stream around
-  try {
-    if (!currentStream) {
-      currentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    }
-    micReady = true;
-  } catch (e) {
-    console.warn("Mic permission not granted yet:", e);
-    // We still continue; user can use typing.
-  }
-
-  // 3) greet Saif
-  try {
-    await speakText("Hey Saif, how can I assist you today?");
-  } catch (e) {
-    console.warn("Greeting TTS failed:", e);
-  }
-}
-
-const initOverlay = document.getElementById("initOverlay");
-const startBtn = document.getElementById("startSaraBtn");
-if (startBtn) {
-  startBtn.addEventListener("click", async () => {
-    startBtn.disabled = true;
-    try {
-      await initSara();
-      if (typeof window.__startSARA === "function") {
-        await window.__startSARA();
-      }
-    } finally {
-      if (initOverlay) initOverlay.style.display = "none";
-      startBtn.disabled = false;
-    }
-  });
-};
-
-// --- Hold-to-talk (press and hold to record; on release: STT -> Chat -> TTS)
-let mediaRecorder, chunks = [], currentStream;
-const micBtn = document.getElementById("micBtn");
-const resultBox = document.getElementById("result");
-let isRecording = false;
-
-function updateMicUI() {
-  if (!micBtn) return;
-  if (isRecording) {
-    micBtn.classList.add("recording");
-    micBtn.title = "Tap to stop";
-    micBtn.textContent = "⏺️";
-  } else {
-    micBtn.classList.remove("recording");
-    micBtn.title = "Tap to talk";
-    micBtn.textContent = "🎙️";
-  }
-}
-async function toggleRecording() {
-  if (isRecording) {
-    try { stopRecording(); } finally { isRecording = false; updateMicUI(); }
-    return;
-  }
-  await startRecording();
-  isRecording = true;
-  updateMicUI();
-}
-
-// Ask SARA with the textarea content, show and speak reply
-async function askSara() {
-  try {
-    const textEl = document.getElementById("reflectText");
-    const text = (textEl.value || "").trim();
-    if (!text) { alert("Type something to ask SARA."); return; }
-    const reply = await chatAndGetReply(text);
-    if (resultBox) resultBox.textContent = reply;
-    await speakText(reply);
-  } catch (e) {
-    console.error(e);
-    alert(e.message || "Chat failed");
-  }
-}
-
-const askBtn = document.getElementById("askBtn");
-if (askBtn) {
-  askBtn.addEventListener("click", askSara);
-}
-
-// Choose a MIME type the browser supports; Safari often lacks webm support
-function pickMime() {
-  if (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm')) {
-    return { mime: 'audio/webm', ext: 'webm' };
-  }
-  if (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/mp4')) {
-    return { mime: 'audio/mp4', ext: 'm4a' };
-  }
-  return { mime: '', ext: 'wav' };
-}
-
-async function startRecording() {
-  try {
-    if (!currentStream) {
-      currentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    }
-    const { mime } = pickMime();
-
-    chunks = [];
-    mediaRecorder = mime ? new MediaRecorder(currentStream, { mimeType: mime })
-                         : new MediaRecorder(currentStream);
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size) chunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = async () => {
+    async function loadCurrentCard() {
       try {
-        // flush any buffered data and allow one tick for final chunk
-        try { mediaRecorder.requestData?.(); } catch {}
-        await new Promise(r => setTimeout(r, 50));
+        const res = await fetch(apiBase + "/api/currentCard");
+        const data = await res.json();
+        $("currentCard").textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        $("currentCard").textContent = "Error loading current card: " + e;
+      }
+    }
 
-        const totalBytes = chunks.reduce((n, b) => n + (b?.size || 0), 0);
-        if (!totalBytes) {
-          alert("No audio captured. Try holding for ~1s, or use Chrome if you’re on Safari.");
+    async function saveReflection() {
+      const text = ($("reflectionInput").value || "").trim();
+      if (!text) return;
+      try {
+        setHudStatus("Saving reflection…");
+        const res = await fetch(apiBase + "/api/reflect", {
+          method: "POST",
+          headers: buildHeaders(true),
+          body: JSON.stringify({ text }),
+        });
+        const data = await res.json();
+        setHudStatus("Reflection saved.");
+        setLastResult(data.summary || JSON.stringify(data, null, 2));
+      } catch (e) {
+        setHudStatus("Reflection error");
+        setLastResult("Error: " + e);
+      }
+    }
+
+    // --- Conversations ---
+    async function refreshConversations() {
+      try {
+        const res = await fetch(apiBase + "/api/conversations?limit=30", {
+          headers: buildHeaders(false),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "failed");
+        conversationsCache = data.items || [];
+        renderConversationList();
+      } catch (e) {
+        console.error(e);
+        setHudStatus("Conversations error");
+      }
+    }
+
+    function renderConversationList() {
+      const ul = $("conversationList");
+      ul.innerHTML = "";
+      const q = $("conversationSearch").value.toLowerCase().trim();
+      const items = conversationsCache.filter((c) => {
+        if (!q) return true;
+        const haystack =
+          (c.title || "") +
+          " " +
+          ((c.last_text || "") + "").toLowerCase();
+        return haystack.toLowerCase().includes(q);
+      });
+
+      if (items.length === 0) {
+        const li = document.createElement("li");
+        li.style.fontSize = "11px";
+        li.style.color = "var(--fg-muted)";
+        li.textContent = q
+          ? "No conversations match your filter."
+          : "No conversations yet. Start one with Ask SARA.";
+        ul.appendChild(li);
+        return;
+      }
+
+      for (const c of items) {
+        const li = document.createElement("li");
+        li.className =
+          "conversation-item" +
+          (currentConversationId === c.id ? " active" : "");
+        li.dataset.id = c.id;
+
+        const title = document.createElement("div");
+        title.className = "conversation-title";
+        title.textContent = c.title || "(untitled)";
+        li.appendChild(title);
+
+        const meta = document.createElement("div");
+        meta.className = "conversation-meta";
+        meta.innerHTML =
+          `<span>#${c.id}</span><span>${(c.created_at || "").slice(0, 16)}</span>`;
+        li.appendChild(meta);
+
+        const last = document.createElement("div");
+        last.className = "conversation-last";
+        last.textContent = c.last_text || "";
+        li.appendChild(last);
+
+        li.onclick = () => {
+          currentConversationId = c.id;
+          $("convHint").textContent = `Active conversation #${c.id}`;
+          renderConversationList();
+        };
+
+        ul.appendChild(li);
+      }
+    }
+
+    async function newConversation() {
+      try {
+        setHudStatus("Creating conversation…");
+        const res = await fetch(apiBase + "/api/conversations", {
+          method: "POST",
+          headers: buildHeaders(true),
+          body: JSON.stringify({ title: "Untitled" }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "failed");
+        currentConversationId = data.id;
+        $("convHint").textContent = `Active conversation #${data.id}`;
+        await refreshConversations();
+        setHudStatus("Conversation created");
+      } catch (e) {
+        setHudStatus("New conversation error");
+        console.error(e);
+      }
+    }
+
+    // --- Chat & Voice ---
+    async function sendTextToSara(text, opts = {}) {
+      const autoSpeakPreferred = !!opts.speakPreferred;
+      const autoSpeak = $("autoSpeakToggle").checked && autoSpeakPreferred;
+
+      if (!text || !text.trim()) return;
+      const payload = {
+        text: text.trim(),
+        conversation_id: currentConversationId,
+      };
+
+      try {
+        setHudStatus(autoSpeak ? "Speaking…" : "Thinking…");
+        if (autoSpeak) {
+          const res = await fetch(apiBase + "/api/speak", {
+            method: "POST",
+            headers: buildHeaders(true),
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok)
+            throw new Error("speak failed: " + (await res.text()));
+
+          const cid = res.headers.get("X-Conversation-Id");
+          if (cid) currentConversationId = parseInt(cid, 10);
+
+          const replyB64 = res.headers.get("X-Reply-Text-B64");
+          let replyText = "";
+          if (replyB64) {
+            try {
+              replyText = atob(replyB64);
+            } catch {}
+          }
+          setLastResult(replyText || "[Voice reply sent]");
+          $("convHint").textContent = `Active conversation #${currentConversationId}`;
+
+          const buf = await res.arrayBuffer();
+          const blob = new Blob([buf], { type: "audio/mpeg" });
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.play();
+
+          await refreshConversations();
+        } else {
+          const res = await fetch(apiBase + "/api/chat", {
+            method: "POST",
+            headers: buildHeaders(true),
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || "chat failed");
+          currentConversationId = data.conversation_id;
+          setLastResult(data.reply || "");
+          $("convHint").textContent = `Active conversation #${currentConversationId}`;
+          await refreshConversations();
+        }
+        setHudStatus("Ready");
+      } catch (e) {
+        console.error(e);
+        setHudStatus("Chat error");
+        setLastResult("Error: " + e);
+      }
+    }
+
+    // --- Mic / STT / Auto-listen / Wake word ---
+    let mediaStream = null;
+    let mediaRecorder = null;
+    let chunks = [];
+    let isRecording = false;
+    let autoListenEnabled = false;
+    let wakeWordEnabled = false;
+
+    async function ensureMediaStream() {
+      if (!mediaStream) {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+      }
+    }
+
+    function updateMicUI() {
+      const btn = $("micButton");
+      $("micIcon").textContent = isRecording ? "⏹" : "🎙";
+      if (isRecording) {
+        btn.classList.add("recording");
+        setVoiceStatus("recording…");
+      } else {
+        btn.classList.remove("recording");
+        if (!autoListenEnabled) setVoiceStatus("idle");
+      }
+    }
+
+    async function startMicOnce() {
+      try {
+        await ensureMediaStream();
+        chunks = [];
+        mediaRecorder = new MediaRecorder(mediaStream);
+        isRecording = true;
+        updateMicUI();
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) chunks.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
+          isRecording = false;
+          updateMicUI();
+          const blob = new Blob(chunks, { type: "audio/webm" });
+          handleRecordedBlob(blob).catch(console.error);
+        };
+
+        mediaRecorder.start();
+        // safety stop at ~8s
+        setTimeout(() => {
+          if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.stop();
+          }
+        }, 8000);
+      } catch (e) {
+        console.error(e);
+        setVoiceStatus("mic error");
+      }
+    }
+
+    function stopMic() {
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+      }
+    }
+
+    function scheduleNextListen() {
+      if (!autoListenEnabled) return;
+      setTimeout(() => {
+        if (autoListenEnabled && !isRecording) {
+          startMicOnce().catch(console.error);
+        }
+      }, 600);
+    }
+
+    async function handleRecordedBlob(blob) {
+      try {
+        setVoiceStatus("transcribing…");
+        const form = new FormData();
+        form.append("audio", blob, "mic.webm");
+
+        const headers = buildHeaders(false);
+        const res = await fetch(apiBase + "/api/stt", {
+          method: "POST",
+          headers,
+          body: form,
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          setLastResult("STT error: " + (data.error || "failed"));
+          setVoiceStatus("idle");
+          scheduleNextListen();
           return;
         }
 
-        const { ext } = pickMime();
-        const blob = new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' });
-        const form = new FormData();
-        form.append("audio", blob, `mic.${ext}`);
-
-        const apiKey = (localStorage.getItem("SARA_API_KEY") || "").trim();
-        const sttRes = await fetch(`${API_BASE}/api/stt`, {
-          method: "POST",
-          headers: { ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}) },
-          body: form
-        });
-
-        if (!sttRes.ok) {
-          const t = await sttRes.text().catch(() => sttRes.statusText);
-          throw new Error(`STT failed: ${sttRes.status} ${t}`);
+        let text = (data.text || "").trim();
+        if (!text) {
+          setVoiceStatus("idle (no speech)");
+          scheduleNextListen();
+          return;
         }
 
-        const stt = await sttRes.json().catch(() => ({}));
-        if (!stt || !stt.ok || !stt.text) throw new Error("STT failed");
+        if (wakeWordEnabled) {
+          const lower = text.toLowerCase();
+          const phrase = "hey sara";
+          const idx = lower.indexOf(phrase);
+          if (idx === -1) {
+            setLastResult("Wake word not detected. Heard: " + text);
+            setVoiceStatus("listening for wake word");
+            scheduleNextListen();
+            return;
+          }
+          text = text.slice(idx + phrase.length).trim() || "Hello.";
+        }
 
-        const textEl = document.getElementById("reflectText");
-        if (textEl) textEl.value = stt.text;
-
-        const reply = await chatAndGetReply(stt.text);
-        if (resultBox) resultBox.textContent = reply;
-        await speakText(reply);
+        setLastResult("You: " + text);
+        await sendTextToSara(text, { speakPreferred: true });
+        setVoiceStatus("idle");
+        scheduleNextListen();
       } catch (e) {
         console.error(e);
-        alert(e.message || "Mic/Chat failed");
-      } finally {
-        isRecording = false;
-        updateMicUI();
-        currentStream?.getTracks()?.forEach(t => t.stop());
-        currentStream = null;
+        setLastResult("Voice error: " + e);
+        setVoiceStatus("idle");
+        scheduleNextListen();
+      }
+    }
+
+    // --- Wiring ---
+    $("toggleThemeBtn").onclick = () => {
+      document.body.classList.toggle("light");
+    };
+    $("openDocsBtn").onclick = () => {
+      window.open("/docs", "_blank");
+    };
+    $("refreshCardBtn").onclick = loadCurrentCard;
+    $("saveReflectionBtn").onclick = saveReflection;
+    $("askSaraBtn").onclick = () => {
+      const text = $("reflectionInput").value;
+      sendTextToSara(text, { speakPreferred: true });
+    };
+    $("reflectionInput").addEventListener("keydown", (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        const text = $("reflectionInput").value;
+        sendTextToSara(text, { speakPreferred: true });
+      }
+    });
+
+    $("newConversationBtn").onclick = newConversation;
+    $("conversationSearch").addEventListener("input", renderConversationList);
+
+    $("micButton").onclick = () => {
+      if (isRecording) {
+        stopMic();
+      } else {
+        autoListenEnabled = false;
+        $("autoListenToggle").checked = false;
+        startMicOnce().catch(console.error);
       }
     };
 
-    mediaRecorder.start();
-  } catch (e) {
-    console.error(e);
-    alert("Mic access failed (check browser permissions).");
-    isRecording = false;
-    updateMicUI();
-  }
-}
-
-function stopRecording() {
-  try {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
-  } catch {}
-}
-
-if (micBtn) {
-  micBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    toggleRecording();
-  });
-}
-// Space bar toggles recording (global) unless focused on an input/textarea
-document.addEventListener("keydown", (e) => {
-  const tag = (document.activeElement?.tagName || "").toLowerCase();
-  const typing = tag === "input" || tag === "textarea";
-  if (!typing && e.code === "Space" && !e.repeat) {
-    e.preventDefault();
-    toggleRecording();
-  }
-});
-</script>
-</script>
-<script>
-(() => {
-  // ---------- Config ----------
-  const API_BASE = location.origin;           // works for api.saralabs.xyz and Render
-  const USE_AUTH = false;                     // set true only if ENFORCE_API_KEY=true
-  const API_KEY = "";                         // fill only if USE_AUTH=true
-
-  // VAD parameters
-  const THRESHOLD   = 0.025;   // energy gate
-  const ATTACK_MS   = 120;     // speech must exceed threshold this long to start
-  const RELEASE_MS  = 750;     // silence this long to stop
-  const MAX_SEG_MS  = 25000;   // safety cap for a single utterance
-  const METER_SMOOTH = 0.2;
-
-  // ---------- State ----------
-  let mediaStream, audioCtx, analyser, sourceNode;
-  let mediaRecorder;
-  let chunks = [];
-  let listening = false;
-  let inUtterance = false;
-  let attackElapsed = 0;
-  let releaseElapsed = 0;
-  let segElapsed = 0;
-  let lastRaf = 0;
-  let levelSmooth = 0;
-
-  const elAuto = document.getElementById('autoListen');
-  const elMic  = document.getElementById('micBtn');
-  const vuFill = document.getElementById('vuFill');
-
-  // ---------- Mic control ----------
-  async function startMic() {
-    if (listening) return;
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true }
-    });
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 1024;
-    sourceNode.connect(analyser);
-
-    // recorder in WebM/Opus if possible
-    const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
-    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime, audioBitsPerSecond: 48000 });
-    mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-    mediaRecorder.onstop = handleUtteranceStop;
-
-    listening = true;
-    requestAnimationFrame(raf);
-  }
-
-  function stopMic() {
-    listening = false;
-    try { mediaRecorder && mediaRecorder.state !== 'inactive' && mediaRecorder.stop(); } catch {}
-    try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
-    try { audioCtx && audioCtx.close(); } catch {}
-    mediaStream = audioCtx = analyser = sourceNode = null;
-    if (vuFill) vuFill.style.width = '0%';
-  }
-
-  function getLevel() {
-    if (!analyser) return 0;
-    const buf = new Uint8Array(analyser.fftSize);
-    analyser.getByteTimeDomainData(buf);
-    let sum = 0;
-    for (let i=0;i<buf.length;i++) {
-      const v = (buf[i]-128)/128;
-      sum += v*v;
-    }
-    return Math.sqrt(sum / buf.length);
-  }
-
-  function raf(ts=0) {
-    if (!listening) return;
-    const dt = lastRaf ? (ts - lastRaf) : 16;
-    lastRaf = ts;
-
-    const lvl = getLevel();
-    levelSmooth = levelSmooth + (lvl - levelSmooth) * METER_SMOOTH;
-    if (vuFill) vuFill.style.width = Math.min(100, Math.max(0, levelSmooth*100)) + '%';
-
-    if (!inUtterance) {
-      if (lvl >= THRESHOLD) {
-        attackElapsed += dt;
-        if (attackElapsed >= ATTACK_MS) startUtterance();
-      } else {
-        attackElapsed = 0;
+    $("autoListenToggle").onchange = (e) => {
+      autoListenEnabled = e.target.checked;
+      if (autoListenEnabled && !isRecording) {
+        setVoiceStatus(
+          wakeWordEnabled ? "auto-listen (wake word)" : "auto-listen"
+        );
+        startMicOnce().catch(console.error);
+      } else if (!autoListenEnabled && !isRecording) {
+        setVoiceStatus("idle");
       }
-    } else {
-      segElapsed += dt;
-      if (lvl < THRESHOLD) releaseElapsed += dt; else releaseElapsed = 0;
-      if (releaseElapsed >= RELEASE_MS || segElapsed >= MAX_SEG_MS) stopUtterance();
-    }
+    };
 
-    requestAnimationFrame(raf);
-  }
+    $("wakeWordToggle").onchange = (e) => {
+      wakeWordEnabled = e.target.checked;
+      if (wakeWordEnabled && autoListenEnabled) {
+        setVoiceStatus("auto-listen (wake word)");
+      }
+    };
 
-  function startUtterance() {
-    if (!mediaRecorder || mediaRecorder.state !== 'inactive') return;
-    chunks = [];
-    inUtterance = true;
-    releaseElapsed = 0;
-    segElapsed = 0;
-    mediaRecorder.start();
-    if (elMic) elMic.classList.add('recording');
-  }
-
-  function stopUtterance() {
-    if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
-    inUtterance = false;
-    mediaRecorder.stop(); // triggers handleUtteranceStop
-    if (elMic) elMic.classList.remove('recording');
-  }
-
-  async function handleUtteranceStop() {
-    if (!chunks.length) return;
-    const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-    chunks = [];
-    try {
-      const transcript = await stt(blob);
-      if (transcript) await chat(transcript);
-    } catch (e) {
-      console.error('VAD/STT error:', e);
-    }
-  }
-
-  // ---------- Network helpers ----------
-  async function stt(blob) {
-    const fd = new FormData();
-    fd.append('audio', blob, 'mic.webm');
-    const res = await fetch(`${API_BASE}/api/stt`, {
-      method: 'POST',
-      headers: USE_AUTH ? { 'Authorization': `Bearer ${API_KEY}` } : undefined,
-      body: fd
-    });
-    if (!res.ok) throw new Error(`STT ${res.status}: ${await res.text()}`);
-    const j = await res.json();
-    return j?.text || '';
-  }
-
-  async function chat(text) {
-    const res = await fetch(`${API_BASE}/api/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(USE_AUTH ? { 'Authorization': `Bearer ${API_KEY}` } : {})
-      },
-      body: JSON.stringify({ text })
-    });
-    const j = await res.json();
-    const reply = j?.reply || '';
-    if (reply) {
-      try {
-        const tts = await fetch(`${API_BASE}/api/tts`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(USE_AUTH ? { 'Authorization': `Bearer ${API_KEY}` } : {})
-          },
-          body: JSON.stringify({ text: reply, voice: 'alloy' })
-        });
-        const buf = await tts.arrayBuffer();
-        const audio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' })));
-        audio.play().catch(()=>{});
-      } catch (e) { console.warn('TTS failed', e); }
-    }
-    const last = document.getElementById('result');
-    if (last && reply) last.textContent = reply;
-  }
-
-  // ---------- UI wiring ----------
-  elAuto?.addEventListener('change', async () => {
-    if (elAuto.checked) await startMic(); else stopMic();
-  });
-
-  // Make the round mic toggle the whole auto-listen loop
-  elMic?.addEventListener('click', async () => {
-    if (!listening) {
-      await startMic();
-      if (elAuto) elAuto.checked = true;
-    } else {
-      stopMic();
-      if (elAuto) elAuto.checked = false;
-    }
-  });
-
-  // Expose a start hook the overlay can call
-  window.__startSARA = async () => {
-    try { audioCtx && audioCtx.state === 'suspended' && await audioCtx.resume(); } catch {}
-    if (elAuto?.checked) await startMic();
-  };
-})();
-</script>
+    // Initial load
+    (async function init() {
+      setHudStatus("Booting…");
+      await loadCurrentCard();
+      await refreshConversations();
+      setHudStatus("Ready");
+      setLastResult("_");
+    })();
+  </script>
+</body>
+</html>
