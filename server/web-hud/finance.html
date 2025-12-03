@@ -97,6 +97,35 @@
       flex-wrap: wrap;
     }
 
+    /* Tabs */
+    .tabs {
+      display: inline-flex;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 999px;
+      padding: 3px;
+      gap: 3px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      margin-top: 8px;
+    }
+
+    .tab-btn {
+      border: none;
+      outline: none;
+      border-radius: 999px;
+      padding: 5px 12px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      background: transparent;
+      color: var(--fg-muted);
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: rgba(15, 21, 45, 0.95);
+      color: var(--fg);
+    }
+
     .api-input {
       border-radius: 999px;
       border: 1px solid rgba(255, 255, 255, 0.08);
@@ -140,6 +169,16 @@
 
     @media (max-width: 880px) {
       .grid { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    .month-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr);
+      gap: 16px;
+    }
+
+    @media (max-width: 880px) {
+      .month-grid { grid-template-columns: minmax(0, 1fr); }
     }
 
     .card {
@@ -305,7 +344,7 @@
 
     .tx-row {
       display: grid;
-      grid-template-columns: 1.2fr 0.8fr 0.7fr;
+      grid-template-columns: 1.2fr 0.8fr 0.7fr 0.15fr;
       gap: 8px;
       padding: 7px 10px;
       font-size: 12px;
@@ -338,6 +377,20 @@
       border-radius: 999px;
       border: 1px solid rgba(255, 255, 255, 0.06);
       color: var(--fg-muted);
+    }
+
+    .tx-delete {
+      border: none;
+      background: transparent;
+      color: var(--fg-muted);
+      font-size: 14px;
+      cursor: pointer;
+      justify-self: end;
+      padding: 0 4px;
+    }
+
+    .tx-delete:hover {
+      color: var(--danger);
     }
 
     .insight {
@@ -378,6 +431,40 @@
       background: var(--danger);
       box-shadow: 0 0 12px rgba(255, 79, 106, 0.8);
     }
+
+    /* Monthly category list */
+    .month-cats {
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(3, 6, 18, 0.9);
+      padding: 8px 0;
+      margin-top: 6px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+
+    .month-cat-row {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr 0.9fr;
+      gap: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      align-items: baseline;
+    }
+
+    .month-cat-row:nth-child(odd) {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .month-cat-label {
+      color: var(--fg-muted);
+    }
+
+    .month-cat-amount,
+    .month-cat-budget {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
   </style>
 </head>
 <body>
@@ -396,82 +483,149 @@
       </div>
     </div>
 
-    <div class="grid">
-      <!-- Left column: Input + Today summary -->
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Log an expense</div>
-            <div class="card-subtitle">Talk to S.A.R.A. like a human. She’ll do the math.</div>
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="today">Today</button>
+      <button class="tab-btn" data-tab="month">This Month</button>
+    </div>
+
+    <!-- TODAY VIEW -->
+    <div id="today-view">
+      <div class="grid">
+        <!-- Left column: Input + Today summary -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Log an expense</div>
+              <div class="card-subtitle">Talk to S.A.R.A. like a human. She’ll do the math.</div>
+            </div>
+            <div class="status" id="log-status">
+              <div class="status-dot"></div>
+              <span>Idle</span>
+            </div>
           </div>
-          <div class="status" id="log-status">
-            <div class="status-dot"></div>
-            <span>Idle</span>
+
+          <div class="input-shell" style="margin-top: 4px;">
+            <input
+              id="expense-input"
+              type="text"
+              autocomplete="off"
+              placeholder="“Record $3 espresso at Mike’s” or “20 SAR Uber to Jeddah airport”"
+            />
+            <button class="mic-btn" id="mic-btn" title="Voice input (beta)">🎙</button>
+            <button class="primary-btn" id="log-btn">
+              <span>Log</span>
+              <span>↵</span>
+            </button>
+          </div>
+
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+            <button class="chip" data-emotion="calm">Calm</button>
+            <button class="chip" data-emotion="stressed">Stressed</button>
+            <button class="chip" data-emotion="tired">Tired</button>
+            <button class="chip" data-emotion="excited">Excited</button>
+            <button class="chip" data-emotion="guilty">Guilty</button>
+          </div>
+
+          <div style="margin-top: 10px;">
+            <div class="card-title">Today</div>
+            <div class="metric-row" style="margin-top: 6px;">
+              <div>
+                <div class="card-subtitle">Total spent</div>
+                <div class="big-number" id="total-spent">$0.00 <span id="currency-label">USD</span></div>
+              </div>
+              <div style="text-align:right;">
+                <div class="card-subtitle">Coffee today</div>
+                <div style="font-size:13px; font-variant-numeric: tabular-nums;" id="coffee-spent">$0.00</div>
+              </div>
+            </div>
+            <div class="metric-row">
+              <span>Transactions: <strong id="tx-count">0</strong></span>
+              <span id="top-category-label">Top category: –</span>
+            </div>
           </div>
         </div>
 
-        <div class="input-shell" style="margin-top: 4px;">
-          <input
-            id="expense-input"
-            type="text"
-            autocomplete="off"
-            placeholder="“Record $3 espresso at Mike’s” or “20 SAR Uber to Jeddah airport”"
-          />
-          <button class="mic-btn" id="mic-btn" title="Voice input (beta)">🎙</button>
-          <button class="primary-btn" id="log-btn">
-            <span>Log</span>
-            <span>↵</span>
-          </button>
-        </div>
+        <!-- Right column: Insight + transaction list -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">S.A.R.A.’s read on today</div>
+              <div class="card-subtitle">Not “good” or “bad” – just patterns.</div>
+            </div>
+            <span class="pill-small" id="summary-period">Today</span>
+          </div>
 
-        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
-          <button class="chip" data-emotion="calm">Calm</button>
-          <button class="chip" data-emotion="stressed">Stressed</button>
-          <button class="chip" data-emotion="tired">Tired</button>
-          <button class="chip" data-emotion="excited">Excited</button>
-          <button class="chip" data-emotion="guilty">Guilty</button>
-        </div>
+          <div class="insight">
+            <div class="insight-title">Today’s pattern</div>
+            <div id="insight-text">
+              No spending logged yet. Once you add a few things, I’ll start reflecting your patterns back to you.
+            </div>
+          </div>
 
-        <div style="margin-top: 10px;">
-          <div class="card-title">Today</div>
+          <div style="margin-top: 10px; font-size:11px; text-transform:uppercase; letter-spacing:0.12em; color:var(--fg-muted);">
+            Today’s transactions
+          </div>
+          <div class="transactions" id="tx-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MONTH VIEW -->
+    <div id="month-view" style="display:none; margin-top:10px;">
+      <div class="month-grid">
+        <!-- Left: monthly summary -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">This month</div>
+              <div class="card-subtitle" id="month-period-label">Current month overview</div>
+            </div>
+            <span class="pill-small" id="month-summary-pill">Month</span>
+          </div>
+
           <div class="metric-row" style="margin-top: 6px;">
             <div>
               <div class="card-subtitle">Total spent</div>
-              <div class="big-number" id="total-spent">$0.00 <span id="currency-label">USD</span></div>
+              <div class="big-number" id="month-total-spent">$0.00 <span>USD</span></div>
             </div>
             <div style="text-align:right;">
-              <div class="card-subtitle">Coffee today</div>
-              <div style="font-size:13px; font-variant-numeric: tabular-nums;" id="coffee-spent">$0.00</div>
+              <div class="card-subtitle">Under / over budget</div>
+              <div style="font-size:13px; font-variant-numeric: tabular-nums;" id="month-over-under">$0.00 under</div>
             </div>
           </div>
           <div class="metric-row">
-            <span>Transactions: <strong id="tx-count">0</strong></span>
-            <span id="top-category-label">Top category: –</span>
+            <span>Transactions: <strong id="month-tx-count">0</strong></span>
+            <span id="month-budget-label">Monthly budget: $0.00</span>
           </div>
-        </div>
-      </div>
 
-      <!-- Right column: Insight + transaction list -->
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">S.A.R.A.’s read on today</div>
-            <div class="card-subtitle">Not “good” or “bad” – just patterns.</div>
-          </div>
-          <span class="pill-small" id="summary-period">Today</span>
-        </div>
-
-        <div class="insight">
-          <div class="insight-title">Today’s pattern</div>
-          <div id="insight-text">
-            No spending logged yet. Once you add a few things, I’ll start reflecting your patterns back to you.
+          <div class="insight" style="margin-top:10px;">
+            <div class="insight-title">Month’s pattern</div>
+            <div id="month-insight-text">
+              Once you’ve logged a bit this month, I’ll surface patterns and easy adjustments here.
+            </div>
           </div>
         </div>
 
-        <div style="margin-top: 10px; font-size:11px; text-transform:uppercase; letter-spacing:0.12em; color:var(--fg-muted);">
-          Today’s transactions
+        <!-- Right: category breakdown + transactions table -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Monthly breakdown</div>
+              <div class="card-subtitle">Categories and all transactions for this month.</div>
+            </div>
+          </div>
+
+          <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.12em; color:var(--fg-muted); margin-bottom:4px;">
+            Categories vs budget
+          </div>
+          <div class="month-cats" id="month-cat-list"></div>
+
+          <div style="margin-top:10px; font-size:11px; text-transform:uppercase; letter-spacing:0.12em; color:var(--fg-muted);">
+            This month’s transactions
+          </div>
+          <div class="transactions" id="month-tx-list"></div>
         </div>
-        <div class="transactions" id="tx-list"></div>
       </div>
     </div>
   </div>
@@ -484,6 +638,8 @@
     const micBtn = document.getElementById("mic-btn");
     const logStatus = document.getElementById("log-status");
     const txList = document.getElementById("tx-list");
+    const monthTxList = document.getElementById("month-tx-list");
+    const monthCatList = document.getElementById("month-cat-list");
     const totalSpentEl = document.getElementById("total-spent");
     const coffeeSpentEl = document.getElementById("coffee-spent");
     const txCountEl = document.getElementById("tx-count");
@@ -491,6 +647,13 @@
     const currencyLabel = document.getElementById("currency-label");
     const insightText = document.getElementById("insight-text");
     const apiKeyInput = document.getElementById("apiKeyInput");
+
+    const monthTotalSpentEl = document.getElementById("month-total-spent");
+    const monthOverUnderEl = document.getElementById("month-over-under");
+    const monthTxCountEl = document.getElementById("month-tx-count");
+    const monthBudgetLabelEl = document.getElementById("month-budget-label");
+    const monthInsightTextEl = document.getElementById("month-insight-text");
+    const monthPeriodLabelEl = document.getElementById("month-period-label");
 
     let selectedEmotion = null;
     let isRecording = false;
@@ -540,21 +703,22 @@
         }
         topCategoryLabel.textContent = `Top category: ${topCat}`;
 
-        renderTransactions(today);
+        renderTransactions(today, { targetEl: txList, allowDelete: true });
       } catch (err) {
         console.error(err);
         setLogStatus("Error talking to S.A.R.A.", true);
       }
     }
 
-    function renderTransactions(txs) {
-      if (!txs.length) {
-        txList.innerHTML =
+    function renderTransactions(txs, options = {}) {
+      const { targetEl = txList, allowDelete = false } = options;
+      if (!txs || !txs.length) {
+        targetEl.innerHTML =
           '<div style="padding:8px 10px; font-size:12px; color:var(--fg-muted);">Nothing logged yet. Try adding one thing.</div>';
         return;
       }
 
-      txList.innerHTML = "";
+      targetEl.innerHTML = "";
       for (const tx of txs) {
         const row = document.createElement("div");
         row.className = "tx-row";
@@ -579,7 +743,128 @@
         row.appendChild(amountDiv);
         row.appendChild(tagDiv);
 
-        txList.appendChild(row);
+        const deleteCell = document.createElement("div");
+        if (allowDelete && tx.id != null) {
+          const delBtn = document.createElement("button");
+          delBtn.className = "tx-delete";
+          delBtn.textContent = "×";
+          delBtn.title = "Delete transaction";
+          delBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            await deleteTransaction(tx.id);
+          });
+          deleteCell.appendChild(delBtn);
+        }
+        row.appendChild(deleteCell);
+
+        targetEl.appendChild(row);
+      }
+    }
+
+    function renderMonthCategories(summary) {
+      const cats = summary.by_category || {};
+      const budget = summary.budget_by_category || {};
+      const diffs = summary.diff_by_category || {};
+      const currency = summary.currency || "USD";
+
+      const entries = Object.keys({ ...cats, ...budget }).sort();
+      if (!entries.length) {
+        monthCatList.innerHTML =
+          '<div style="padding:8px 10px; font-size:12px; color:var(--fg-muted);">No categories yet for this month.</div>';
+        return;
+      }
+
+      monthCatList.innerHTML = "";
+      for (const cat of entries) {
+        const spent = cats[cat] || 0;
+        const bud = budget[cat] || 0;
+        const diff = diffs[cat];
+        const row = document.createElement("div");
+        row.className = "month-cat-row";
+
+        const label = document.createElement("div");
+        label.className = "month-cat-label";
+        label.textContent = cat;
+
+        const spentDiv = document.createElement("div");
+        spentDiv.className = "month-cat-amount";
+        spentDiv.textContent = `$${spent.toFixed(2)} ${currency}`;
+
+        const budgetDiv = document.createElement("div");
+        budgetDiv.className = "month-cat-budget";
+        if (bud > 0) {
+          budgetDiv.textContent = `$${bud.toFixed(2)} ${currency}`;
+        } else {
+          budgetDiv.textContent = "—";
+        }
+
+        row.appendChild(label);
+        row.appendChild(spentDiv);
+        row.appendChild(budgetDiv);
+
+        monthCatList.appendChild(row);
+      }
+    }
+
+    async function deleteTransaction(id) {
+      try {
+        const res = await fetch(`${API_BASE}/${id}`, {
+          method: "DELETE",
+          headers: buildHeaders(false),
+        });
+        if (!res.ok) {
+          throw new Error("Delete failed");
+        }
+        await fetchSummary();
+        await fetchMonthSummary();
+      } catch (err) {
+        console.error(err);
+        setLogStatus("Error deleting transaction", true);
+      }
+    }
+
+    async function fetchMonthSummary() {
+      try {
+        const [summaryRes, monthRes] = await Promise.all([
+          fetch(`${API_BASE}/summary/monthly`, { headers: buildHeaders(false) }),
+          fetch(`${API_BASE}/month`, { headers: buildHeaders(false) }),
+        ]);
+
+        if (!summaryRes.ok) throw new Error("Monthly summary failed");
+        if (!monthRes.ok) throw new Error("Month list failed");
+
+        const summary = await summaryRes.json();
+        const monthTxs = await monthRes.json();
+
+        const total = summary.total_spent.toFixed(2);
+        const currency = summary.currency || "USD";
+        monthTotalSpentEl.innerHTML = `$${total} <span>${currency}</span>`;
+        monthTxCountEl.textContent = summary.transaction_count;
+
+        const budgetTotal = summary.budget_total || 0;
+        const overUnder = summary.over_under_total || 0;
+        const direction = overUnder >= 0 ? "under" : "over";
+        monthBudgetLabelEl.textContent = `Monthly budget: $${budgetTotal.toFixed(2)} ${currency}`;
+        monthOverUnderEl.textContent = `$${Math.abs(overUnder).toFixed(2)} ${direction}`;
+
+        monthInsightTextEl.textContent =
+          summary.insight || "Month in progress. I’ll surface patterns as you log more.";
+
+        const y = summary.year;
+        const m = summary.month;
+        if (y && m) {
+          const monthStr = new Date(y, m - 1, 1).toLocaleString(undefined, {
+            month: "long",
+            year: "numeric",
+          });
+          monthPeriodLabelEl.textContent = monthStr;
+        }
+
+        renderMonthCategories(summary);
+        const txItems = monthTxs.items || monthTxs;
+        renderTransactions(txItems, { targetEl: monthTxList, allowDelete: true });
+      } catch (err) {
+        console.error(err);
       }
     }
 
@@ -609,6 +894,7 @@
         selectedEmotion = null;
         document.querySelectorAll(".chip").forEach((ch) => ch.classList.remove("selected"));
         await fetchSummary();
+        await fetchMonthSummary();
       } catch (err) {
         console.error(err);
         setLogStatus("Error logging expense", true);
@@ -653,6 +939,30 @@
     // API key change → refetch with new auth
     apiKeyInput.addEventListener("change", () => {
       fetchSummary();
+      fetchMonthSummary();
+    });
+
+    // Tabs: Today / This Month
+    const todayView = document.getElementById("today-view");
+    const monthView = document.getElementById("month-view");
+    const tabs = document.querySelectorAll(".tab-btn");
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const target = tab.getAttribute("data-tab");
+        tabs.forEach((t) => t.classList.remove("active"));
+        tab.classList.add("active");
+
+        if (target === "today") {
+          todayView.style.display = "";
+          monthView.style.display = "none";
+          fetchSummary();
+        } else {
+          todayView.style.display = "none";
+          monthView.style.display = "";
+          fetchMonthSummary();
+        }
+      });
     });
 
     // Initial load
