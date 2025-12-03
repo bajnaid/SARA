@@ -657,6 +657,8 @@
 
     let selectedEmotion = null;
     let isRecording = false;
+    let mediaRecorder = null;
+    let audioChunks = [];
 
     function buildHeaders(json = true) {
       const headers = {};
@@ -868,6 +870,40 @@
       }
     }
 
+    async function sendAudioToStt(blob) {
+      setLogStatus("Transcribing…");
+      try {
+        const formData = new FormData();
+        formData.append("file", blob, "speech.webm");
+
+        const res = await fetch("/api/stt", {
+          method: "POST",
+          headers: buildHeaders(false),
+          body: formData,
+        });
+
+        if (!res.ok) {
+          throw new Error("STT request failed");
+        }
+
+        const data = await res.json();
+        const text = data.text || data.transcript || "";
+
+        if (text) {
+          expenseInput.value = text;
+          setLogStatus("Ready to log");
+        } else {
+          setLogStatus("No speech detected", true);
+        }
+      } catch (err) {
+        console.error(err);
+        setLogStatus("STT error", true);
+      } finally {
+        isRecording = false;
+        micBtn.classList.remove("active");
+      }
+    }
+
     async function logExpense() {
       const text = expenseInput.value.trim();
       if (!text) return;
@@ -929,11 +965,53 @@
       }
     });
 
-    // Placeholder mic button – can later wire to /api/stt -> /api/finance/log
-    micBtn.addEventListener("click", () => {
-      isRecording = !isRecording;
-      micBtn.classList.toggle("active", isRecording);
-      setLogStatus(isRecording ? "Listening (stub)" : "Idle");
+    micBtn.addEventListener("click", async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setLogStatus("Voice not supported on this browser", true);
+        return;
+      }
+
+      if (isRecording && mediaRecorder) {
+        mediaRecorder.stop();
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            audioChunks.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          stream.getTracks().forEach((t) => t.stop());
+
+          if (!audioChunks.length) {
+            setLogStatus("No audio captured", true);
+            isRecording = false;
+            micBtn.classList.remove("active");
+            return;
+          }
+
+          const blob = new Blob(audioChunks, { type: "audio/webm" });
+          await sendAudioToStt(blob);
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+        micBtn.classList.add("active");
+        setLogStatus("Listening… tap again to stop");
+      } catch (err) {
+        console.error(err);
+        setLogStatus("Mic permission denied", true);
+        isRecording = false;
+        micBtn.classList.remove("active");
+      }
     });
 
     // API key change → refetch with new auth
