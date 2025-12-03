@@ -115,6 +115,12 @@ def _ensure_db() -> None:
             )
             """
         )
+        # Add user_id column to reflections if it does not exist
+        try:
+            con.execute("ALTER TABLE reflections ADD COLUMN user_id TEXT DEFAULT 'default'")
+        except Exception:
+            pass
+
         # Conversations table (no updated_at)
         con.execute(
             """
@@ -125,6 +131,12 @@ def _ensure_db() -> None:
             )
             """
         )
+        # Add user_id column to conversations if it does not exist
+        try:
+            con.execute("ALTER TABLE conversations ADD COLUMN user_id TEXT DEFAULT 'default'")
+        except Exception:
+            pass
+
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS messages (
@@ -137,7 +149,14 @@ def _ensure_db() -> None:
             )
             """
         )
+        # Add user_id column to messages if it does not exist
+        try:
+            con.execute("ALTER TABLE messages ADD COLUMN user_id TEXT DEFAULT 'default'")
+        except Exception:
+            pass
+
         con.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, created_at)")
+
         # Transactions table for finance tracking
         con.execute(
             """
@@ -160,24 +179,24 @@ def _ensure_db() -> None:
         con.close()
 
 
-def _insert_reflection(text: str) -> None:
+def _insert_reflection(text: str, user_id: str) -> None:
     ts = datetime.now(timezone.utc).isoformat()
     con = sqlite3.connect(str(_db_path()))
     try:
         con.execute(
-            "INSERT INTO reflections(text, created_at) VALUES (?, ?)",
-            (text, ts),
+            "INSERT INTO reflections(user_id, text, created_at) VALUES (?, ?, ?)",
+            (user_id, text, ts),
         )
         con.commit()
     finally:
         con.close()
 
 
-async def save_reflection(text: str) -> dict:
+async def save_reflection(text: str, user_id: str) -> dict:
     """Persist a reflection and return a simple summary."""
     try:
         _ensure_db()
-        _insert_reflection(text)
+        _insert_reflection(text, user_id)
     except Exception:
         # Keep API resilient; admin endpoints surface issues
         pass
@@ -198,33 +217,35 @@ except Exception:
 # -------------------------------------------------------------------
 # Conversations & Messages helpers
 # -------------------------------------------------------------------
-def _create_conversation(title: str = "") -> int:
+def _create_conversation(user_id: str, title: str = "") -> int:
     ts = datetime.now(timezone.utc).isoformat()
     con = sqlite3.connect(str(_db_path()))
     try:
         cur = con.cursor()
         cur.execute(
-            "INSERT INTO conversations(title, created_at) VALUES (?, ?)",
-            (title.strip() or None, ts),
+            "INSERT INTO conversations(user_id, title, created_at) VALUES (?, ?, ?)",
+            (user_id, title.strip() or None, ts),
         )
         con.commit()
         return int(cur.lastrowid)
     finally:
         con.close()
 
-def _insert_message(conversation_id: int, role: str, text: str) -> None:
+
+def _insert_message(user_id: str, conversation_id: int, role: str, text: str) -> None:
     ts = datetime.now(timezone.utc).isoformat()
     con = sqlite3.connect(str(_db_path()))
     try:
         con.execute(
-            "INSERT INTO messages(conversation_id, role, text, created_at) VALUES (?, ?, ?, ?)",
-            (conversation_id, role, text, ts),
+            "INSERT INTO messages(user_id, conversation_id, role, text, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, conversation_id, role, text, ts),
         )
         con.commit()
     finally:
         con.close()
 
-def _list_conversations(limit: int = 20) -> list[dict]:
+
+def _list_conversations(user_id: str, limit: int = 20) -> list[dict]:
     con = sqlite3.connect(str(_db_path()))
     try:
         con.row_factory = sqlite3.Row
@@ -238,21 +259,24 @@ def _list_conversations(limit: int = 20) -> list[dict]:
                      SELECT m.text
                      FROM messages m
                      WHERE m.conversation_id = c.id
+                       AND m.user_id = c.user_id
                      ORDER BY m.id DESC
                      LIMIT 1
                    ) AS last_text
             FROM conversations c
+            WHERE c.user_id = ?
             ORDER BY datetime(c.created_at) DESC, c.id DESC
             LIMIT ?
             """,
-            (limit,),
+            (user_id, limit),
         )
         rows = cur.fetchall()
         return [dict(r) for r in rows]
     finally:
         con.close()
 
-def _list_messages(conversation_id: int, limit: int = 50) -> list[dict]:
+
+def _list_messages(user_id: str, conversation_id: int, limit: int = 50) -> list[dict]:
     con = sqlite3.connect(str(_db_path()))
     try:
         con.row_factory = sqlite3.Row
@@ -261,11 +285,12 @@ def _list_messages(conversation_id: int, limit: int = 50) -> list[dict]:
             """
             SELECT id, role, text, created_at
             FROM messages
-            WHERE conversation_id=?
+            WHERE conversation_id = ?
+              AND user_id = ?
             ORDER BY id ASC
             LIMIT ?
             """,
-            (conversation_id, limit),
+            (conversation_id, user_id, limit),
         )
         return [dict(r) for r in cur.fetchall()]
     finally:
@@ -273,25 +298,31 @@ def _list_messages(conversation_id: int, limit: int = 50) -> list[dict]:
 
 
 # --- Conversation management helpers ---
-def _rename_conversation(conversation_id: int, title: str) -> None:
+def _rename_conversation(user_id: str, conversation_id: int, title: str) -> None:
     """Rename a conversation."""
     con = sqlite3.connect(str(_db_path()))
     try:
         con.execute(
-            "UPDATE conversations SET title = ? WHERE id = ?",
-            (title.strip() or None, conversation_id),
+            "UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?",
+            (title.strip() or None, conversation_id, user_id),
         )
         con.commit()
     finally:
         con.close()
 
 
-def _delete_conversation(conversation_id: int) -> None:
+def _delete_conversation(user_id: str, conversation_id: int) -> None:
     """Delete a conversation and its messages."""
     con = sqlite3.connect(str(_db_path()))
     try:
-        con.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
-        con.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+        con.execute(
+            "DELETE FROM messages WHERE conversation_id = ? AND user_id = ?",
+            (conversation_id, user_id),
+        )
+        con.execute(
+            "DELETE FROM conversations WHERE id = ? AND user_id = ?",
+            (conversation_id, user_id),
+        )
         con.commit()
     finally:
         con.close()
@@ -504,12 +535,16 @@ async def current_card():
 
 
 @app.post("/api/reflect")
-async def reflect(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+async def reflect(
+    payload: dict = Body(...),
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     _require_api_key(authorization)
     text = (payload.get("text") or "").strip()
     if not text:
         return {"ok": False, "error": "No reflection text."}
-    return await save_reflection(text)
+    return await save_reflection(text, str(user.id))
 
 
 @app.get("/api/reflections")
@@ -581,7 +616,7 @@ async def api_stt(
 
 
 # Helper to run chat completion and persist both turns
-def _chat_and_persist(user_text: str, conv_id: Optional[int]) -> tuple[int, str]:
+def _chat_and_persist(user_id: str, user_text: str, conv_id: Optional[int]) -> tuple[int, str]:
     """
     Runs chat completion with the current system prompt, persists user and assistant turns.
     Returns (conversation_id, reply_text).
@@ -600,21 +635,20 @@ def _chat_and_persist(user_text: str, conv_id: Optional[int]) -> tuple[int, str]
         cid = None
     if not cid:
         _ensure_db()
-        cid = _create_conversation(title=text[:120])
+        cid = _create_conversation(user_id, title=text[:120])
 
     # persist user message
     try:
-        _insert_message(cid, "user", text)
+        _insert_message(user_id, cid, "user", text)
     except Exception:
         logging.exception("Failed to persist user message")
 
-    # system style
     system = (
         "You are S.A.R.A., a concise, warm assistant and coach. "
         "Reply in 1–3 short sentences unless more detail is requested. "
         "Prefer direct, helpful answers with a clear next step."
     )
-    # run model
+
     try:
         resp = _oai.chat.completions.create(
             model="gpt-4o-mini",
@@ -626,14 +660,14 @@ def _chat_and_persist(user_text: str, conv_id: Optional[int]) -> tuple[int, str]
         )
         reply = (resp.choices[0].message.content or "").strip()
         if not reply:
-            reply = "I’m here. Try asking me again with a bit more detail?"
+            reply = "I'm here. Try asking me again with a bit more detail?"
     except Exception as e:
         logging.exception("CHAT failed")
         raise HTTPException(500, f"Chat error: {e}")
 
     # persist assistant message
     try:
-        _insert_message(cid, "assistant", reply)
+        _insert_message(user_id, cid, "assistant", reply)
     except Exception:
         logging.exception("Failed to persist assistant message")
 
@@ -642,17 +676,25 @@ def _chat_and_persist(user_text: str, conv_id: Optional[int]) -> tuple[int, str]
 
 # New concise chat endpoint with persistence and conversations
 @app.post("/api/chat")
-async def api_chat(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+async def api_chat(
+    payload: dict = Body(...),
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     _require_api_key(authorization)
     user_text = (payload.get("text") or "").strip()
     conv_id_in = payload.get("conversation_id")
-    cid, reply = _chat_and_persist(user_text, conv_id_in)
+    cid, reply = _chat_and_persist(str(user.id), user_text, conv_id_in)
     return {"ok": True, "reply": reply, "conversation_id": cid}
 
 
 # Speak endpoint: chat and stream TTS audio of reply
 @app.post("/api/speak")
-async def api_speak(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+async def api_speak(
+    payload: dict = Body(...),
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     """
     One-shot: user text -> assistant reply (persisted) -> MP3 audio stream of reply.
     Sets X-Conversation-Id and X-Reply-Text headers for convenience.
@@ -665,7 +707,7 @@ async def api_speak(payload: dict = Body(...), authorization: Optional[str] = He
     conv_id_in = payload.get("conversation_id")
     voice = (payload.get("voice") or "alloy").strip() or "alloy"
 
-    cid, reply = _chat_and_persist(user_text, conv_id_in)
+    cid, reply = _chat_and_persist(str(user.id), user_text, conv_id_in)
 
     try:
         tts_resp = _oai.audio.speech.create(
@@ -689,7 +731,12 @@ async def api_speak(payload: dict = Body(...), authorization: Optional[str] = He
 # ------------------- Conversation API -------------------
 # ------------------- Daily Summary Endpoint -------------------
 @app.get("/api/dailySummary")
-def api_daily_summary(limit_messages: int = 40, limit_reflections: int = 20, authorization: Optional[str] = Header(None)):
+def api_daily_summary(
+    limit_messages: int = 40,
+    limit_reflections: int = 20,
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     _require_api_key(authorization)
     if not OPENAI_API_KEY:
         raise HTTPException(500, "OPENAI_API_KEY missing")
@@ -699,13 +746,26 @@ def api_daily_summary(limit_messages: int = 40, limit_reflections: int = 20, aut
     con = sqlite3.connect(str(_db_path()))
     try:
         con.row_factory = sqlite3.Row
+        uid = str(user.id)
         msgs = con.execute(
-            "SELECT role, text, created_at FROM messages ORDER BY id DESC LIMIT ?",
-            (limit_messages,)
+            """
+            SELECT role, text, created_at
+            FROM messages
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (uid, limit_messages),
         ).fetchall()
         refls = con.execute(
-            "SELECT text, created_at FROM reflections ORDER BY id DESC LIMIT ?",
-            (limit_reflections,)
+            """
+            SELECT text, created_at
+            FROM reflections
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (uid, limit_reflections),
         ).fetchall()
     finally:
         con.close()
@@ -1153,7 +1213,11 @@ def api_finance_summary_daily(
     }
 
 @app.get("/api/conversations")
-def api_list_conversations(limit: int = 20, authorization: Optional[str] = Header(None)):
+def api_list_conversations(
+    limit: int = 20,
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     """
     List recent conversations (most recently updated first).
     Returns id, title, created_at, updated_at, and last_text.
@@ -1161,17 +1225,22 @@ def api_list_conversations(limit: int = 20, authorization: Optional[str] = Heade
     _require_api_key(authorization)
     try:
         _ensure_db()
-        return {"ok": True, "items": _list_conversations(limit=limit)}
+        return {"ok": True, "items": _list_conversations(str(user.id), limit=limit)}
     except Exception as e:
         logging.exception("list conversations failed")
         raise HTTPException(500, f"error: {e}")
 
 @app.get("/api/conversations/{conversation_id}")
-def api_get_conversation(conversation_id: int, limit: int = 200, authorization: Optional[str] = Header(None)):
+def api_get_conversation(
+    conversation_id: int,
+    limit: int = 200,
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     _require_api_key(authorization)
     try:
         _ensure_db()
-        return {"ok": True, "items": _list_messages(conversation_id, limit=limit)}
+        return {"ok": True, "items": _list_messages(str(user.id), conversation_id, limit=limit)}
     except Exception as e:
         logging.exception("get conversation failed")
         raise HTTPException(500, f"error: {e}")
@@ -1180,30 +1249,43 @@ def api_get_conversation(conversation_id: int, limit: int = 200, authorization: 
 # --- Conversation management endpoints ---
 
 @app.post("/api/conversations")
-def api_new_conversation(payload: dict = Body({}), authorization: Optional[str] = Header(None)):
+def api_new_conversation(
+    payload: dict = Body({}),
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     _require_api_key(authorization)
     _ensure_db()
     title = (payload.get("title") or "Untitled").strip()
-    cid = _create_conversation(title=title[:120])
+    cid = _create_conversation(str(user.id), title=title[:120])
     return {"ok": True, "id": cid, "title": title}
 
 
 @app.patch("/api/conversations/{conversation_id}")
-def api_rename_conversation(conversation_id: int, payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+def api_rename_conversation(
+    conversation_id: int,
+    payload: dict = Body(...),
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     _require_api_key(authorization)
     new_title = (payload.get("title") or "Untitled").strip()
     if not new_title:
         raise HTTPException(400, "title required")
     _ensure_db()
-    _rename_conversation(conversation_id, new_title)
+    _rename_conversation(str(user.id), conversation_id, new_title)
     return {"ok": True, "id": conversation_id, "title": new_title}
 
 
 @app.delete("/api/conversations/{conversation_id}")
-def api_delete_conversation(conversation_id: int, authorization: Optional[str] = Header(None)):
+def api_delete_conversation(
+    conversation_id: int,
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     _require_api_key(authorization)
     _ensure_db()
-    _delete_conversation(conversation_id)
+    _delete_conversation(str(user.id), conversation_id)
     return {"ok": True, "id": conversation_id}
 
 
@@ -1264,24 +1346,26 @@ def api_selftest(authorization: Optional[str] = Header(None)):
     report: dict[str, list[str] | str | bool] = {"steps": []}
 
     try:
+        test_user_id = "selftest"
+
         # create
-        cid = _create_conversation("Self-test")
+        cid = _create_conversation(test_user_id, "Self-test")
         report["steps"].append(f"create:{cid}")  # type: ignore[arg-type]
 
         # user turn + assistant turn (persisted)
-        _, reply = _chat_and_persist("Quick self-check: say 'pong' once.", cid)
+        _, reply = _chat_and_persist(test_user_id, "Quick self-check: say 'pong' once.", cid)
         report["steps"].append(f"chat:{'ok' if reply else 'no-reply'}")  # type: ignore[arg-type]
 
         # list
-        convs = _list_conversations(limit=5)
+        convs = _list_conversations(test_user_id, limit=5)
         report["steps"].append(f"list:{len(convs)}")  # type: ignore[arg-type]
 
         # rename
-        _rename_conversation(cid, "Self-test (renamed)")
+        _rename_conversation(test_user_id, cid, "Self-test (renamed)")
         report["steps"].append("rename:ok")  # type: ignore[arg-type]
 
         # delete
-        _delete_conversation(cid)
+        _delete_conversation(test_user_id, cid)
         report["steps"].append("delete:ok")  # type: ignore[arg-type]
 
         return {"ok": True, "report": report}
