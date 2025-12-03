@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
-from fastapi import FastAPI, Body, Header, HTTPException, UploadFile, File
+from fastapi import FastAPI, Body, Header, HTTPException, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
@@ -18,6 +18,9 @@ from openai import OpenAI
 import inspect
 import logging
 import base64
+
+# Import auth router and user helpers
+from .auth import router as auth_router, get_current_user, User
 
 # Optional: import service-layer functions (no circular imports)
 try:
@@ -85,6 +88,9 @@ app.add_middleware(
 
 # Serve static HUD
 app.mount("/hud", StaticFiles(directory=str(HUD_DIR), html=True), name="hud")
+
+# Include auth router
+app.include_router(auth_router)
 
 # -------------------------------------------------------------------
 # Persistence helpers (SQLite on Render Disk)
@@ -734,7 +740,11 @@ def api_daily_summary(limit_messages: int = 40, limit_reflections: int = 20, aut
 # ------------------- Finance API (v0.1) -------------------
 
 @app.post("/api/finance/log")
-def api_finance_log(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
+def api_finance_log(
+    payload: dict = Body(...),
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     """Log an expense in natural language.
 
     Payload example:
@@ -791,7 +801,7 @@ def api_finance_log(payload: dict = Body(...), authorization: Optional[str] = He
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                "default",
+                str(user.id),
                 created_at_iso,
                 amount_cents,
                 currency,
@@ -824,6 +834,7 @@ def api_finance_month(
     year: Optional[int] = None,
     month: Optional[int] = None,
     authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
 ):
     """List all transactions for a given month (default: current month)."""
     _require_api_key(authorization)
@@ -853,7 +864,7 @@ def api_finance_month(
               AND created_at < ?
             ORDER BY created_at ASC
             """,
-            ("default", start.isoformat(), next_start.isoformat()),
+            (str(user.id), start.isoformat(), next_start.isoformat()),
         ).fetchall()
     finally:
         con.close()
@@ -886,6 +897,7 @@ def api_finance_summary_monthly(
     year: Optional[int] = None,
     month: Optional[int] = None,
     authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
 ):
     """Monthly finance summary with simple budget comparison."""
     _require_api_key(authorization)
@@ -916,7 +928,7 @@ def api_finance_summary_monthly(
               AND created_at >= ?
               AND created_at < ?
             """,
-            ("default", start.isoformat(), next_start.isoformat()),
+            (str(user.id), start.isoformat(), next_start.isoformat()),
         ).fetchall()
     finally:
         con.close()
@@ -991,7 +1003,11 @@ def api_finance_summary_monthly(
 
 
 @app.delete("/api/finance/{transaction_id}")
-def api_finance_delete(transaction_id: int, authorization: Optional[str] = Header(None)):
+def api_finance_delete(
+    transaction_id: int,
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     """Delete a single transaction by id."""
     _require_api_key(authorization)
     _ensure_db()
@@ -1001,7 +1017,7 @@ def api_finance_delete(transaction_id: int, authorization: Optional[str] = Heade
         cur = con.cursor()
         cur.execute(
             "DELETE FROM transactions WHERE id = ? AND user_id = ?",
-            (transaction_id, "default"),
+            (transaction_id, str(user.id)),
         )
         con.commit()
         deleted = cur.rowcount
@@ -1015,7 +1031,10 @@ def api_finance_delete(transaction_id: int, authorization: Optional[str] = Heade
 
 
 @app.get("/api/finance/today")
-def api_finance_today(authorization: Optional[str] = Header(None)):
+def api_finance_today(
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     """List today's transactions for the default user."""
     _require_api_key(authorization)
     _ensure_db()
@@ -1033,7 +1052,7 @@ def api_finance_today(authorization: Optional[str] = Header(None)):
             WHERE user_id = ? AND created_at BETWEEN ? AND ?
             ORDER BY created_at DESC
             """,
-            ("default", start, end),
+            (str(user.id), start, end),
         ).fetchall()
     finally:
         con.close()
@@ -1057,7 +1076,10 @@ def api_finance_today(authorization: Optional[str] = Header(None)):
 
 
 @app.get("/api/finance/summary/daily")
-def api_finance_summary_daily(authorization: Optional[str] = Header(None)):
+def api_finance_summary_daily(
+    authorization: Optional[str] = Header(None),
+    user: User = Depends(get_current_user),
+):
     """Daily finance summary: total, by category, coffee, and a small insight."""
     _require_api_key(authorization)
     _ensure_db()
@@ -1074,7 +1096,7 @@ def api_finance_summary_daily(authorization: Optional[str] = Header(None)):
             SELECT * FROM transactions
             WHERE user_id = ? AND created_at BETWEEN ? AND ?
             """,
-            ("default", start.isoformat(), end.isoformat()),
+            (str(user.id), start.isoformat(), end.isoformat()),
         ).fetchall()
     finally:
         con.close()
