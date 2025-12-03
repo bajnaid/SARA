@@ -186,8 +186,17 @@
       }
 
       .layout {
-        grid-template-columns: 1fr;
+        display: flex;
+        flex-direction: column;
         gap: 12px;
+      }
+
+      .layout > section {
+        order: 1;
+      }
+
+      .layout > aside {
+        order: 2;
       }
 
       .panel {
@@ -400,6 +409,21 @@
       max-height: 220px;
       overflow-y: auto;
     }
+    .tasks-card {
+      font-family: var(--font-sans);
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: normal;
+    }
+
+    .tasks-card ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .tasks-card li {
+      margin-bottom: 4px;
+    }
     body.light .pre-block {
       background: rgba(255, 255, 255, 0.95);
     }
@@ -479,20 +503,8 @@
         </div>
       </aside>
 
-      <!-- RIGHT: Current card + reflection + voice -->
+      <!-- RIGHT: Reflection + current tasks + voice -->
       <section class="panel">
-        <!-- Current card -->
-        <div class="panel-header">
-          <div>
-            <div class="panel-title">Current Card</div>
-            <div class="panel-sub">Composed by your backend AI coach service</div>
-          </div>
-          <button id="refreshCardBtn" style="font-size:11px;padding:5px 10px;">
-            Refresh
-          </button>
-        </div>
-        <pre id="currentCard" class="pre-block">Loading…</pre>
-
         <!-- Reflection / chat -->
         <div class="field-stack">
           <label style="font-size:11px;color:var(--fg-muted);">
@@ -528,6 +540,18 @@
           <label style="font-size:11px;color:var(--fg-muted);">Last result</label>
           <pre id="lastResult" class="pre-block">_</pre>
         </div>
+
+        <!-- Current tasks card -->
+        <div class="panel-header" style="margin-top:10px;">
+          <div>
+            <div class="panel-title">Current Tasks</div>
+            <div class="panel-sub">Small list of things worth doing today</div>
+          </div>
+          <button id="refreshCardBtn" style="font-size:11px;padding:5px 10px;">
+            Refresh
+          </button>
+        </div>
+        <div id="currentTasksCard" class="pre-block tasks-card">Loading…</div>
 
         <div class="footer-row">
           <span id="voiceStatus">Voice: idle</span>
@@ -565,13 +589,102 @@
     let currentConversationId = null;
     let conversationsCache = [];
 
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function renderCurrentTasks(data) {
+      if (!data) {
+        return "<em>No tasks yet. Save a reflection and I’ll suggest one.</em>";
+      }
+
+      // If backend returns an array of tasks
+      if (Array.isArray(data)) {
+        if (data.length === 0) {
+          return "<em>No tasks yet.</em>";
+        }
+        const items = data
+          .map((t) => {
+            if (typeof t === "string") return `<li>${escapeHtml(t)}</li>`;
+            if (t && typeof t === "object") {
+              const label = t.title || t.label || t.task || t.text || JSON.stringify(t);
+              return `<li>${escapeHtml(label)}</li>`;
+            }
+            return "";
+          })
+          .join("");
+        return `<ul>${items}</ul>`;
+      }
+
+      // If backend returns an object with a tasks/items array
+      const tasks = Array.isArray(data.tasks)
+        ? data.tasks
+        : Array.isArray(data.items)
+        ? data.items
+        : null;
+      if (tasks) {
+        if (tasks.length === 0) {
+          return "<em>No tasks yet.</em>";
+        }
+        const items = tasks
+          .map((t) => {
+            if (typeof t === "string") return `<li>${escapeHtml(t)}</li>`;
+            if (t && typeof t === "object") {
+              const label = t.title || t.label || t.task || t.text || JSON.stringify(t);
+              return `<li>${escapeHtml(label)}</li>`;
+            }
+            return "";
+          })
+          .join("");
+        return `<ul>${items}</ul>`;
+      }
+
+      // Fallback to title/body/cta style card
+      const parts = [];
+      if (data.title) {
+        parts.push(
+          `<div style="font-weight:600;margin-bottom:4px;">${escapeHtml(
+            data.title
+          )}</div>`
+        );
+      }
+      if (data.body) {
+        parts.push(
+          `<div style="font-size:12px;line-height:1.4;margin-bottom:6px;">${escapeHtml(
+            data.body
+          )}</div>`
+        );
+      }
+      if (data.cta) {
+        parts.push(
+          `<div style="font-size:11px;opacity:0.8;">${escapeHtml(data.cta)}</div>`
+        );
+      }
+      if (parts.length > 0) {
+        return parts.join("");
+      }
+
+      // Last resort: pretty-printed JSON
+      return `<pre style="margin:0;white-space:pre-wrap;">${escapeHtml(
+        JSON.stringify(data, null, 2)
+      )}</pre>`;
+    }
+
     async function loadCurrentCard() {
+      const cardEl = $("currentTasksCard");
+      if (!cardEl) return;
       try {
         const res = await fetch(apiBase + "/api/currentCard");
         const data = await res.json();
-        $("currentCard").textContent = JSON.stringify(data, null, 2);
+        cardEl.innerHTML = renderCurrentTasks(data);
       } catch (e) {
-        $("currentCard").textContent = "Error loading current card: " + e;
+        cardEl.textContent = "Error loading current tasks: " + e;
       }
     }
 
