@@ -154,9 +154,66 @@
       gap: 16px;
       align-items: stretch;
     }
+
     @media (max-width: 900px) {
       .layout {
         grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .shell {
+        padding: 12px 10px 20px;
+      }
+
+      .topbar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .topbar-actions {
+        width: 100%;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        gap: 8px;
+      }
+
+      .topbar-actions button,
+      .topbar-actions .chip-toggle {
+        flex: 1 1 48%;
+        min-width: 0;
+      }
+
+      .layout {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+
+      .panel {
+        padding: 12px;
+      }
+
+      .conversation-list {
+        max-height: 180px;
+      }
+
+      .pre-block {
+        max-height: 220px;
+      }
+
+      .footer-row {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .row {
+        flex-wrap: wrap;
+      }
+
+      .audio-controls {
+        width: 100%;
+        justify-content: flex-start;
       }
     }
 
