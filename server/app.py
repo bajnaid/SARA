@@ -3,7 +3,7 @@ import json
 import shutil
 import sqlite3
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
 from fastapi import FastAPI, Body, Header, HTTPException, UploadFile, File
@@ -313,6 +313,20 @@ If something is ambiguous, make a best guess.
 Always return VALID JSON only, no extra text.
 """
 
+# Very simple monthly budget by category (USD).
+# You can tweak these numbers whenever you want.
+MONTHLY_BUDGET_BY_CATEGORY: dict[str, float] = {
+    "coffee": 100.0,
+    "food": 300.0,
+    "groceries": 200.0,
+    "transport": 150.0,
+    "subscriptions": 110.0,
+    "rent": 875.0,
+    "college": 150.0,
+    "fun": 100.0,
+    "other": 150.0,
+}
+
 
 def _parse_transaction_input(user_text: str) -> dict:
     """Use OpenAI to turn natural text into a structured transaction dict."""
@@ -347,7 +361,7 @@ def _parse_transaction_input(user_text: str) -> dict:
         data.setdefault("created_at_iso", datetime.now(timezone.utc).isoformat())
         data.setdefault("notes", "")
 
-    # Hard fallbacks / normalization
+    # Hard fallbacks / normalization from the model
     if "amount" not in data:
         data["amount"] = 0.0
     if "currency" not in data or not data["currency"]:
@@ -358,6 +372,65 @@ def _parse_transaction_input(user_text: str) -> dict:
         data["category"] = "other"
     if "notes" not in data:
         data["notes"] = ""
+
+    # ------------------------------------------------------------------
+    # Heuristics to clean up categories & merchant using the raw text
+    # ------------------------------------------------------------------
+    text_lower = user_text.lower()
+
+    # Coffee
+    coffee_keywords = [
+        "coffee", "latte", "espresso", "cortado", "americano",
+        "flat white", "cold brew", "drip", "brew",
+    ]
+    if any(k in text_lower for k in coffee_keywords):
+        data["category"] = "coffee"
+
+    # Transport
+    transport_keywords = [
+        "uber", "lyft", "taxi", "cab", "mta", "subway", "train",
+        "bus", "metro", "ride",
+    ]
+    if any(k in text_lower for k in transport_keywords):
+        data["category"] = "transport"
+
+    # Groceries
+    grocery_keywords = [
+        "grocery", "groceries", "supermarket", "whole foods",
+        "trader joe", "bodega", "market",
+    ]
+    if any(k in text_lower for k in grocery_keywords):
+        data["category"] = "groceries"
+
+    # Subscriptions
+    subscription_keywords = [
+        "spotify", "netflix", "apple music", "icloud",
+        "adobe", "notion", "mubi", "hbo", "max", "youtube premium",
+    ]
+    if any(k in text_lower for k in subscription_keywords):
+        data["category"] = "subscriptions"
+
+    # Rent / housing
+    rent_keywords = ["rent", "landlord", "apartment", "room"]
+    if any(k in text_lower for k in rent_keywords):
+        data["category"] = "rent"
+
+    # College / school
+    college_keywords = ["tuition", "pratt", "course", "class", "college", "registration"]
+    if any(k in text_lower for k in college_keywords):
+        data["category"] = "college"
+
+    # Food separate from groceries/coffee (restaurants, takeout, etc.)
+    food_keywords = [
+        "burger", "pizza", "taco", "tacos", "sushi", "ramen",
+        "dinner", "lunch", "breakfast", "takeout", "delivery",
+    ]
+    if any(k in text_lower for k in food_keywords) and data.get("category") not in ("coffee", "groceries"):
+        data["category"] = "food"
+
+    # Merchant fallback: never leave it empty
+    if not str(data.get("merchant", "")).strip():
+        data["merchant"] = "unknown"
 
     return data
 
@@ -688,6 +761,14 @@ def api_finance_log(payload: dict = Body(...), authorization: Optional[str] = He
     except Exception:
         amount = 0.0
 
+    # Guard: don't insert junk $0 transactions
+    if amount <= 0:
+        raise HTTPException(
+            400,
+            "I couldn't see a positive amount in that. "
+            "Try something like: 'record $7 latte at Blue Bottle'.",
+        )
+
     amount_cents = int(round(amount * 100))
     currency = str(parsed.get("currency", "USD")).upper()
     merchant = (parsed.get("merchant") or "").strip() or None
@@ -738,6 +819,199 @@ def api_finance_log(payload: dict = Body(...), authorization: Optional[str] = He
         "emotion": row["emotion"],
         "notes": row["notes"],
     }
+@app.get("/api/finance/month")
+def api_finance_month(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    authorization: Optional[str] = Header(None),
+):
+    """List all transactions for a given month (default: current month)."""
+    _require_api_key(authorization)
+    _ensure_db()
+
+    now = datetime.now()
+    if year is None:
+        year = now.year
+    if month is None:
+        month = now.month
+
+    start = datetime(year, month, 1)
+    # first day of next month
+    if month == 12:
+        next_start = datetime(year + 1, 1, 1)
+    else:
+        next_start = datetime(year, month + 1, 1)
+
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT * FROM transactions
+            WHERE user_id = ?
+              AND created_at >= ?
+              AND created_at < ?
+            ORDER BY created_at ASC
+            """,
+            ("default", start.isoformat(), next_start.isoformat()),
+        ).fetchall()
+    finally:
+        con.close()
+
+    items: list[dict] = []
+    for row in rows:
+        items.append(
+            {
+                "id": row["id"],
+                "created_at": row["created_at"],
+                "amount": row["amount_cents"] / 100.0,
+                "currency": row["currency"],
+                "merchant": row["merchant"],
+                "category": row["category"],
+                "raw_input": row["raw_input"],
+                "emotion": row["emotion"],
+                "notes": row["notes"],
+            }
+        )
+    return {
+        "ok": True,
+        "year": year,
+        "month": month,
+        "items": items,
+    }
+
+
+@app.get("/api/finance/summary/monthly")
+def api_finance_summary_monthly(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    authorization: Optional[str] = Header(None),
+):
+    """Monthly finance summary with simple budget comparison."""
+    _require_api_key(authorization)
+    _ensure_db()
+
+    now = datetime.now()
+    if year is None:
+        year = now.year
+    if month is None:
+        month = now.month
+
+    start = datetime(year, month, 1)
+    if month == 12:
+        next_start = datetime(year + 1, 1, 1)
+    else:
+        next_start = datetime(year, month + 1, 1)
+
+    # "to_date" = last moment of the month
+    to_date = next_start - timedelta(microseconds=1)
+
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT * FROM transactions
+            WHERE user_id = ?
+              AND created_at >= ?
+              AND created_at < ?
+            """,
+            ("default", start.isoformat(), next_start.isoformat()),
+        ).fetchall()
+    finally:
+        con.close()
+
+    if not rows:
+        return {
+            "period": "month",
+            "year": year,
+            "month": month,
+            "from_date": start.isoformat(),
+            "to_date": to_date.isoformat(),
+            "total_spent": 0.0,
+            "currency": "USD",
+            "by_category": {},
+            "budget_by_category": MONTHLY_BUDGET_BY_CATEGORY,
+            "diff_by_category": {},
+            "budget_total": sum(MONTHLY_BUDGET_BY_CATEGORY.values()),
+            "over_under_total": sum(MONTHLY_BUDGET_BY_CATEGORY.values()),
+            "transaction_count": 0,
+            "insight": "No spending logged for this month yet.",
+        }
+
+    total_cents = 0
+    currency = rows[0]["currency"]
+    by_category_cents: dict[str, int] = {}
+
+    for row in rows:
+        c = int(row["amount_cents"])
+        total_cents += c
+        cat = (row["category"] or "other").lower()
+        by_category_cents[cat] = by_category_cents.get(cat, 0) + c
+
+    total = total_cents / 100.0
+    by_category = {k: v / 100.0 for k, v in by_category_cents.items()}
+
+    # Budget comparison
+    budget_total = sum(MONTHLY_BUDGET_BY_CATEGORY.values())
+    diff_by_category: dict[str, float] = {}
+    for cat, budget in MONTHLY_BUDGET_BY_CATEGORY.items():
+        actual = by_category.get(cat, 0.0)
+        diff_by_category[cat] = round(budget - actual, 2)
+
+    over_under_total = round(budget_total - total, 2)
+
+    if over_under_total < 0:
+        insight = (
+            f"You're ${abs(over_under_total):.2f} over your configured monthly budget "
+            f"(${budget_total:.2f}). Worth looking at subs, food, and 'other'."
+        )
+    else:
+        insight = (
+            f"You're ${over_under_total:.2f} under your configured monthly budget "
+            f"(${budget_total:.2f}). Nice. See if any cuts feel easy without feeling restrictive."
+        )
+
+    return {
+        "period": "month",
+        "year": year,
+        "month": month,
+        "from_date": start.isoformat(),
+        "to_date": to_date.isoformat(),
+        "total_spent": total,
+        "currency": currency,
+        "by_category": by_category,
+        "budget_by_category": MONTHLY_BUDGET_BY_CATEGORY,
+        "diff_by_category": diff_by_category,
+        "budget_total": budget_total,
+        "over_under_total": over_under_total,
+        "transaction_count": len(rows),
+        "insight": insight,
+    }
+
+
+@app.delete("/api/finance/{transaction_id}")
+def api_finance_delete(transaction_id: int, authorization: Optional[str] = Header(None)):
+    """Delete a single transaction by id."""
+    _require_api_key(authorization)
+    _ensure_db()
+
+    con = sqlite3.connect(str(_db_path()))
+    try:
+        cur = con.cursor()
+        cur.execute(
+            "DELETE FROM transactions WHERE id = ? AND user_id = ?",
+            (transaction_id, "default"),
+        )
+        con.commit()
+        deleted = cur.rowcount
+    finally:
+        con.close()
+
+    if not deleted:
+        raise HTTPException(404, f"Transaction {transaction_id} not found.")
+
+    return {"ok": True, "deleted_id": transaction_id}
 
 
 @app.get("/api/finance/today")
