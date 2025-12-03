@@ -682,6 +682,7 @@ def api_finance_log(payload: dict = Body(...), authorization: Optional[str] = He
         logging.exception("finance parse error")
         raise HTTPException(500, f"parse error: {e}")
 
+    # extract model-parsed components
     try:
         amount = float(parsed.get("amount", 0.0))
     except Exception:
@@ -691,8 +692,10 @@ def api_finance_log(payload: dict = Body(...), authorization: Optional[str] = He
     currency = str(parsed.get("currency", "USD")).upper()
     merchant = (parsed.get("merchant") or "").strip() or None
     category = (parsed.get("category") or "other").strip() or "other"
-    created_at_iso = str(parsed.get("created_at_iso") or datetime.now(timezone.utc).isoformat())
     notes = (parsed.get("notes") or "").strip() or None
+
+    # FORCE current timestamp instead of model date
+    created_at_iso = datetime.now(timezone.utc).isoformat()
 
     con = sqlite3.connect(str(_db_path()))
     try:
