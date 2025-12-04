@@ -12,3 +12,4 @@ pydub
 python-multipart>=0.0.9
 python-jose[cryptography]
 email-validator
+passlib[bcrypt]
