@@ -497,8 +497,35 @@
           />
         </div>
 
+        <div class="field-stack" style="margin-top:10px;">
+          <label style="font-size:11px;color:var(--fg-muted);">
+            Login (email + password)
+          </label>
+          <input
+            type="text"
+            id="emailInput"
+            placeholder="Email (e.g. saif@example.com)"
+            style="min-height:auto;margin-bottom:6px;"
+          />
+          <input
+            type="password"
+            id="passwordInput"
+            placeholder="Password"
+            style="min-height:auto;margin-bottom:8px;"
+          />
+          <div class="row">
+            <button id="loginBtn" style="font-size:11px;padding:5px 10px;">
+              Login
+            </button>
+            <button id="logoutBtn" style="font-size:11px;padding:5px 10px;">
+              Logout
+            </button>
+          </div>
+        </div>
+
         <div class="footer-row">
           <span id="hudStatus">Idle</span>
+          <span id="userStatus">Auth: not logged in</span>
           <span id="convHint">Click a conversation or start a new one.</span>
         </div>
       </aside>
@@ -568,11 +595,45 @@
     const apiBase = ""; // same origin (api.saralabs.xyz or onrender)
     const $ = (id) => document.getElementById(id);
 
+    let authToken = null;
+
+    function updateUserStatus() {
+      const el = $("userStatus");
+      if (!el) return;
+      if (authToken) {
+        el.textContent = "Auth: logged in";
+      } else if (($("apiKeyInput")?.value || "").trim()) {
+        el.textContent = "Auth: API key";
+      } else {
+        el.textContent = "Auth: not logged in";
+      }
+    }
+
+    function setAuthToken(token) {
+      authToken = token || null;
+      if (authToken) {
+        try {
+          localStorage.setItem("saraToken", authToken);
+        } catch {}
+      } else {
+        try {
+          localStorage.removeItem("saraToken");
+        } catch {}
+      }
+      updateUserStatus();
+    }
+
     function buildHeaders(json = true) {
       const headers = {};
       if (json) headers["Content-Type"] = "application/json";
-      const key = $("apiKeyInput").value.trim();
-      if (key) headers["Authorization"] = "Bearer " + key;
+
+      // Prefer JWT auth token if present, otherwise fall back to manual API key input
+      if (authToken) {
+        headers["Authorization"] = "Bearer " + authToken;
+      } else {
+        const key = $("apiKeyInput").value.trim();
+        if (key) headers["Authorization"] = "Bearer " + key;
+      }
       return headers;
     }
 
@@ -705,6 +766,55 @@
         setHudStatus("Reflection error");
         setLastResult("Error: " + e);
       }
+    }
+
+    async function login() {
+      const email = ($("emailInput").value || "").trim();
+      const password = $("passwordInput").value || "";
+      if (!email || !password) {
+        setHudStatus("Email and password required.");
+        return;
+      }
+      try {
+        setHudStatus("Logging in…");
+        const body = new URLSearchParams();
+        body.append("username", email);
+        body.append("password", password);
+
+        const res = await fetch(apiBase + "/api/auth/login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body,
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || "login failed");
+        }
+
+        const data = await res.json();
+        if (!data.access_token) {
+          throw new Error("No access_token in response");
+        }
+
+        setAuthToken(data.access_token);
+        setHudStatus("Logged in.");
+        setLastResult("Logged in as " + email);
+      } catch (e) {
+        console.error(e);
+        setHudStatus("Login error");
+        setLastResult("Login error: " + e);
+      }
+    }
+
+    function logout() {
+      setAuthToken(null);
+      if ($("emailInput")) $("emailInput").value = "";
+      if ($("passwordInput")) $("passwordInput").value = "";
+      setHudStatus("Logged out.");
+      setLastResult("You are logged out.");
     }
 
     // --- Conversations ---
@@ -1045,11 +1155,21 @@
       }
     };
 
+    $("loginBtn").onclick = login;
+    $("logoutBtn").onclick = logout;
+
     // Initial load
     (async function init() {
       setHudStatus("Booting…");
       await loadCurrentCard();
       await refreshConversations();
+      try {
+        const stored = localStorage.getItem("saraToken");
+        if (stored) {
+          authToken = stored;
+        }
+      } catch {}
+      updateUserStatus();
       setHudStatus("Ready");
       setLastResult("_");
     })();
