@@ -10,3 +10,5 @@ google-api-python-client==2.146.0
 openai>=1.44.0
 pydub
 python-multipart>=0.0.9
+python-jose[cryptography]
+email-validator
