@@ -662,9 +662,27 @@
 
     function buildHeaders(json = true) {
       const headers = {};
-      if (json) headers["Content-Type"] = "application/json";
+
+      if (json) {
+        headers["Content-Type"] = "application/json";
+      }
+
+      // Prefer JWT token from HUD login, fall back to manual API key
+      let token = null;
+      try {
+        token = localStorage.getItem("saraToken");
+      } catch (e) {
+        // ignore localStorage issues
+      }
+
       const key = apiKeyInput.value.trim();
-      if (key) headers["Authorization"] = "Bearer " + key;
+
+      if (token) {
+        headers["Authorization"] = "Bearer " + token;
+      } else if (key) {
+        headers["Authorization"] = "Bearer " + key;
+      }
+
       return headers;
     }
 
