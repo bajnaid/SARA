@@ -151,6 +151,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         detail="Could not validate credentials.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    # Defensive: terminals / proxies can introduce stray whitespace/newlines.
+    # Stripping avoids signature-verify failures caused by invisible chars.
+    token = token.strip()
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: int = payload.get("sub")
