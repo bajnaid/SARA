@@ -15,11 +15,21 @@ from pydantic import BaseModel, EmailStr
 
 # ---- CONFIG ----
 
+# Prefer a persistent Render disk DB if present, otherwise fall back to local.
+# This prevents "login works but /me 401s" when different processes point at different DB files.
+_env_db = os.environ.get("SARA_DB")
+_render_db = "/var/data/sara.db"
+if _env_db:
+    DB_PATH = _env_db
+elif os.path.exists(_render_db):
+    DB_PATH = _render_db
+else:
+    DB_PATH = "sara.db"
+
 SECRET_KEY = os.environ.get("SARA_SECRET_KEY") or os.environ.get("SECRET_KEY") or "sara-dev-secret-change-me"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
-DB_PATH = os.getenv("SARA_DB", "sara.db")
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -164,6 +174,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     except JWTError:
         raise credentials_exception
 
+    # If different processes point at different DB files, the user row may be missing.
     user = get_user_by_id(int(user_id))
     if user is None:
         raise credentials_exception
@@ -226,4 +237,6 @@ def debug_auth():
         "has_SECRET_KEY": bool(os.environ.get("SECRET_KEY")),
         "alg": ALGORITHM,
         "secret_fingerprint": hashlib.sha256(SECRET_KEY.encode()).hexdigest()[:12],
+        "db_path": DB_PATH,
+        "db_exists": os.path.exists(DB_PATH),
     }
