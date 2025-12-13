@@ -35,6 +35,17 @@ def _secret_fingerprint() -> str:
     # short fingerprint so we can confirm which secret an instance is using
     return hashlib.sha256(SECRET_KEY.encode()).hexdigest()[:12]
 
+def _auth_debug_headers(fail: Optional[str] = None) -> dict:
+    headers = {
+        "WWW-Authenticate": "Bearer",
+        "X-SARA-AUTH-HOST": socket.gethostname(),
+        "X-SARA-AUTH-FP": _secret_fingerprint(),
+        "X-SARA-AUTH-DB": DB_PATH,
+    }
+    if fail:
+        headers["X-SARA-AUTH-FAIL"] = fail
+    return headers
+
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -164,7 +175,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials.",
-        headers={"WWW-Authenticate": "Bearer"},
+        headers=_auth_debug_headers(),
     )
 
     # Defensive: terminals / proxies can introduce stray whitespace/newlines.
@@ -175,14 +186,26 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: int = payload.get("sub")
         if user_id is None:
-            raise credentials_exception
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials.",
+                headers=_auth_debug_headers("no_sub"),
+            )
     except JWTError:
-        raise credentials_exception
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials.",
+            headers=_auth_debug_headers("jwt"),
+        )
 
     # If different processes point at different DB files, the user row may be missing.
     user = get_user_by_id(int(user_id))
     if user is None:
-        raise credentials_exception
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials.",
+            headers=_auth_debug_headers("no_user"),
+        )
     return user
 
 
