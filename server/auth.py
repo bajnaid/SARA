@@ -6,8 +6,9 @@ from typing import Optional
 import os
 import sqlite3
 import hashlib
+import socket
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -29,6 +30,10 @@ else:
 SECRET_KEY = os.environ.get("SARA_SECRET_KEY") or os.environ.get("SECRET_KEY") or "sara-dev-secret-change-me"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+
+def _secret_fingerprint() -> str:
+    # short fingerprint so we can confirm which secret an instance is using
+    return hashlib.sha256(SECRET_KEY.encode()).hexdigest()[:12]
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -212,7 +217,7 @@ def signup(payload: UserCreate):
 
 
 @router.post("/login", response_model=Token)
-def login(payload: UserLogin):
+def login(payload: UserLogin, response: Response):
     row = get_user_row_by_email(payload.email)
     if not row:
         raise HTTPException(status_code=401, detail="Invalid credentials.")
@@ -221,11 +226,20 @@ def login(payload: UserLogin):
         raise HTTPException(status_code=401, detail="Invalid credentials.")
 
     access_token = create_access_token(data={"sub": row["id"]})
+
+    # Helpful debug headers (safe): confirm which instance/secret served this response
+    response.headers["X-SARA-AUTH-HOST"] = socket.gethostname()
+    response.headers["X-SARA-AUTH-FP"] = _secret_fingerprint()
+    response.headers["X-SARA-AUTH-DB"] = DB_PATH
+
     return Token(access_token=access_token)
 
 
 @router.get("/me", response_model=User)
-async def me(user: User = Depends(get_current_user)):
+async def me(response: Response, user: User = Depends(get_current_user)):
+    response.headers["X-SARA-AUTH-HOST"] = socket.gethostname()
+    response.headers["X-SARA-AUTH-FP"] = _secret_fingerprint()
+    response.headers["X-SARA-AUTH-DB"] = DB_PATH
     return user
 
 
@@ -236,7 +250,8 @@ def debug_auth():
         "has_SARA_SECRET_KEY": bool(os.environ.get("SARA_SECRET_KEY")),
         "has_SECRET_KEY": bool(os.environ.get("SECRET_KEY")),
         "alg": ALGORITHM,
-        "secret_fingerprint": hashlib.sha256(SECRET_KEY.encode()).hexdigest()[:12],
+        "host": socket.gethostname(),
+        "secret_fingerprint": _secret_fingerprint(),
         "db_path": DB_PATH,
         "db_exists": os.path.exists(DB_PATH),
     }
