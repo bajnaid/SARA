@@ -5,6 +5,7 @@ from typing import Optional
 
 import os
 import sqlite3
+import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -210,3 +211,14 @@ def login(payload: UserLogin):
 @router.get("/me", response_model=User)
 async def me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.get("/debug")
+def debug_auth():
+    # safe-ish debug: shows which env vars exist + a fingerprint, not the raw secret
+    return {
+        "has_SARA_SECRET_KEY": bool(os.environ.get("SARA_SECRET_KEY")),
+        "has_SECRET_KEY": bool(os.environ.get("SECRET_KEY")),
+        "alg": ALGORITHM,
+        "secret_fingerprint": hashlib.sha256(SECRET_KEY.encode()).hexdigest()[:12],
+    }
