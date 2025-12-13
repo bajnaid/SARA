@@ -10,3 +10,8 @@ unity/Logs/
 unity/Temp/
 unity/Builds/
 server/credentials.json
+
+# secrets
+server/token.json
+server/credentials.json
+.env
