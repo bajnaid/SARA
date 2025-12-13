@@ -47,6 +47,8 @@ def _auth_debug_headers(fail: Optional[str] = None) -> dict:
         "X-SARA-AUTH-HOST": socket.gethostname(),
         "X-SARA-AUTH-FP": _secret_fingerprint(),
         "X-SARA-AUTH-DB": DB_PATH,
+        "X-SARA-AUTH-ALG": ALGORITHM,
+        "X-SARA-AUTH-SEEN-ALG": "",
     }
     if fail:
         headers["X-SARA-AUTH-FAIL"] = fail
@@ -192,16 +194,35 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: int = payload.get("sub")
         if user_id is None:
+            seen_alg = ""
+            try:
+                seen_alg = jwt.get_unverified_header(token).get("alg", "")
+            except Exception:
+                pass
+            headers = _auth_debug_headers("no_sub")
+            if seen_alg:
+                headers["X-SARA-AUTH-SEEN-ALG"] = seen_alg
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Could not validate credentials.",
-                headers=_auth_debug_headers("no_sub"),
+                headers=headers,
             )
-    except JWTError:
+    except JWTError as e:
+        # include the specific jose error class + what alg the token claims (unverified)
+        seen_alg = ""
+        try:
+            seen_alg = jwt.get_unverified_header(token).get("alg", "")
+        except Exception:
+            pass
+
+        headers = _auth_debug_headers(f"jwt:{e.__class__.__name__}")
+        if seen_alg:
+            headers["X-SARA-AUTH-SEEN-ALG"] = seen_alg
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials.",
-            headers=_auth_debug_headers("jwt"),
+            headers=headers,
         )
 
     # If different processes point at different DB files, the user row may be missing.
