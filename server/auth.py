@@ -27,7 +27,13 @@ elif os.path.exists(_render_db):
 else:
     DB_PATH = "sara.db"
 
-SECRET_KEY = os.environ.get("SARA_SECRET_KEY") or os.environ.get("SECRET_KEY") or "sara-dev-secret-change-me"
+ # IMPORTANT: never silently fall back to a default secret in production.
+ # If different instances boot with different secrets, /login will issue tokens that /me can't verify.
+SECRET_KEY = os.environ.get("SARA_SECRET_KEY") or os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "Missing SARA_SECRET_KEY/SECRET_KEY. Set SARA_SECRET_KEY in Render env vars so all instances share the same JWT secret."
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
