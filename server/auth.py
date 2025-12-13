@@ -1,5 +1,3 @@
-# server/auth.py
-
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -128,6 +126,13 @@ def hash_password(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
+
+    # IMPORTANT: JWT spec expects `sub` to be a string. python-jose will raise
+    # JWTClaimsError if `sub` is an int. We store user id as a string in the token
+    # and cast back to int when loading the current user.
+    if "sub" in to_encode and to_encode["sub"] is not None:
+        to_encode["sub"] = str(to_encode["sub"])
+
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
