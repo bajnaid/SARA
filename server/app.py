@@ -537,10 +537,10 @@ async def current_card():
 @app.post("/api/reflect")
 async def reflect(
     payload: dict = Body(...),
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     text = (payload.get("text") or "").strip()
     if not text:
         return {"ok": False, "error": "No reflection text."}
@@ -548,16 +548,16 @@ async def reflect(
 
 
 @app.get("/api/reflections")
-def list_reflections(limit: int = 10, authorization: Optional[str] = Header(None)):
+def list_reflections(limit: int = 10, x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     # Require API key if configured
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     return svc_list_reflections(limit=limit)
 
 
 @app.get("/api/export")
-def export_reflections(authorization: Optional[str] = Header(None)):
+def export_reflections(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     # Require API key if configured
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     data = svc_export_reflections()
     return JSONResponse(
         content=data,
@@ -567,8 +567,8 @@ def export_reflections(authorization: Optional[str] = Header(None)):
 
 
 @app.post("/api/tts")
-async def api_tts(payload: dict = Body(...), authorization: Optional[str] = Header(None)):
-    _require_api_key(authorization)
+async def api_tts(payload: dict = Body(...), x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    _require_api_key(x_api_key)
     if not OPENAI_API_KEY:
         raise HTTPException(500, "OPENAI_API_KEY missing")
 
@@ -592,10 +592,10 @@ async def api_tts(payload: dict = Body(...), authorization: Optional[str] = Head
 
 @app.post("/api/stt")
 async def api_stt(
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     audio: UploadFile = File(...),
 ):
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     if not OPENAI_API_KEY:
         raise HTTPException(500, "OPENAI_API_KEY missing")
 
@@ -678,10 +678,10 @@ def _chat_and_persist(user_id: str, user_text: str, conv_id: Optional[int]) -> t
 @app.post("/api/chat")
 async def api_chat(
     payload: dict = Body(...),
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     user_text = (payload.get("text") or "").strip()
     conv_id_in = payload.get("conversation_id")
     cid, reply = _chat_and_persist(str(user.id), user_text, conv_id_in)
@@ -692,14 +692,14 @@ async def api_chat(
 @app.post("/api/speak")
 async def api_speak(
     payload: dict = Body(...),
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
     """
     One-shot: user text -> assistant reply (persisted) -> MP3 audio stream of reply.
     Sets X-Conversation-Id and X-Reply-Text headers for convenience.
     """
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     if not OPENAI_API_KEY:
         raise HTTPException(500, "OPENAI_API_KEY missing")
 
@@ -734,10 +734,10 @@ async def api_speak(
 def api_daily_summary(
     limit_messages: int = 40,
     limit_reflections: int = 20,
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     if not OPENAI_API_KEY:
         raise HTTPException(500, "OPENAI_API_KEY missing")
 
@@ -802,7 +802,7 @@ def api_daily_summary(
 @app.post("/api/finance/log")
 def api_finance_log(
     payload: dict = Body(...),
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
     """Log an expense in natural language.
@@ -810,7 +810,7 @@ def api_finance_log(
     Payload example:
       { "text": "record $3 espresso at Mike's", "emotion": "tired" }
     """
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     _ensure_db()
 
     text = (payload.get("text") or "").strip()
@@ -893,11 +893,11 @@ def api_finance_log(
 def api_finance_month(
     year: Optional[int] = None,
     month: Optional[int] = None,
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
     """List all transactions for a given month (default: current month)."""
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     _ensure_db()
 
     now = datetime.now()
@@ -956,11 +956,11 @@ def api_finance_month(
 def api_finance_summary_monthly(
     year: Optional[int] = None,
     month: Optional[int] = None,
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
     """Monthly finance summary with simple budget comparison."""
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     _ensure_db()
 
     now = datetime.now()
@@ -1065,11 +1065,11 @@ def api_finance_summary_monthly(
 @app.delete("/api/finance/{transaction_id}")
 def api_finance_delete(
     transaction_id: int,
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
     """Delete a single transaction by id."""
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     _ensure_db()
 
     con = sqlite3.connect(str(_db_path()))
@@ -1092,11 +1092,11 @@ def api_finance_delete(
 
 @app.get("/api/finance/today")
 def api_finance_today(
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
     """List today's transactions for the default user."""
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     _ensure_db()
 
     today = datetime.now().date()
@@ -1137,11 +1137,11 @@ def api_finance_today(
 
 @app.get("/api/finance/summary/daily")
 def api_finance_summary_daily(
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
     """Daily finance summary: total, by category, coffee, and a small insight."""
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     _ensure_db()
 
     today = datetime.now().date()
@@ -1215,14 +1215,14 @@ def api_finance_summary_daily(
 @app.get("/api/conversations")
 def api_list_conversations(
     limit: int = 20,
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
     """
     List recent conversations (most recently updated first).
     Returns id, title, created_at, updated_at, and last_text.
     """
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     try:
         _ensure_db()
         return {"ok": True, "items": _list_conversations(str(user.id), limit=limit)}
@@ -1234,10 +1234,10 @@ def api_list_conversations(
 def api_get_conversation(
     conversation_id: int,
     limit: int = 200,
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     try:
         _ensure_db()
         return {"ok": True, "items": _list_messages(str(user.id), conversation_id, limit=limit)}
@@ -1251,10 +1251,10 @@ def api_get_conversation(
 @app.post("/api/conversations")
 def api_new_conversation(
     payload: dict = Body({}),
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     _ensure_db()
     title = (payload.get("title") or "Untitled").strip()
     cid = _create_conversation(str(user.id), title=title[:120])
@@ -1265,10 +1265,10 @@ def api_new_conversation(
 def api_rename_conversation(
     conversation_id: int,
     payload: dict = Body(...),
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     new_title = (payload.get("title") or "Untitled").strip()
     if not new_title:
         raise HTTPException(400, "title required")
@@ -1280,10 +1280,10 @@ def api_rename_conversation(
 @app.delete("/api/conversations/{conversation_id}")
 def api_delete_conversation(
     conversation_id: int,
-    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     user: User = Depends(get_current_user),
 ):
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     _ensure_db()
     _delete_conversation(str(user.id), conversation_id)
     return {"ok": True, "id": conversation_id}
@@ -1291,8 +1291,8 @@ def api_delete_conversation(
 
 # ------------------- Admin (backups) -------------------
 @app.get("/admin/debug")
-def admin_debug(authorization: Optional[str] = Header(None)):
-    _require_api_key(authorization)
+def admin_debug(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    _require_api_key(x_api_key)
     db = _db_path()
     return {
         "ok": True,
@@ -1305,8 +1305,8 @@ def admin_debug(authorization: Optional[str] = Header(None)):
 
 
 @app.post("/admin/backup")
-def admin_backup(authorization: Optional[str] = Header(None)):
-    _require_api_key(authorization)
+def admin_backup(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    _require_api_key(x_api_key)
     db = _db_path()
     if not db.exists():
         raise HTTPException(status_code=404, detail=f"DB not found at {db}")
@@ -1319,8 +1319,8 @@ def admin_backup(authorization: Optional[str] = Header(None)):
 
 
 @app.get("/admin/backups")
-def admin_backups(authorization: Optional[str] = Header(None)):
-    _require_api_key(authorization)
+def admin_backups(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    _require_api_key(x_api_key)
     backups_dir = Path(os.getenv("SARA_BACKUPS_DIR", BACKUPS_DIR_DEFAULT))
     backups_dir.mkdir(parents=True, exist_ok=True)
     files = sorted([str(p) for p in backups_dir.glob("*.db")])
@@ -1336,12 +1336,12 @@ if __name__ == "__main__":
 
 # --- Self-test endpoint ---
 @app.post("/api/selftest")
-def api_selftest(authorization: Optional[str] = Header(None)):
+def api_selftest(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     """
     Runs a minimal create → chat → list → rename → delete cycle
     without leaving test artifacts. Returns a concise report.
     """
-    _require_api_key(authorization)
+    _require_api_key(x_api_key)
     _ensure_db()
     report: dict[str, list[str] | str | bool] = {"steps": []}
 

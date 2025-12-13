@@ -14,7 +14,7 @@ from pydantic import BaseModel, EmailStr
 
 # ---- CONFIG ----
 
-SECRET_KEY = os.getenv("SARA_AUTH_SECRET", "CHANGE_ME_IN_PROD")
+SECRET_KEY = os.environ.get("SARA_SECRET_KEY") or os.environ.get("SECRET_KEY") or "sara-dev-secret-change-me"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
