@@ -15,3 +15,8 @@ server/credentials.json
 server/token.json
 server/credentials.json
 .env
+
+# secrets
+server/token.json
+server/credentials.json
+.env
