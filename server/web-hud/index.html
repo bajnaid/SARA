@@ -633,14 +633,19 @@
       const headers = {};
       if (json) headers["Content-Type"] = "application/json";
 
-      // Prefer JWT auth token (from memory or localStorage), otherwise fall back to manual API key input
+      // JWT → Authorization
       const token = authToken || getStoredToken();
       if (token) {
         headers["Authorization"] = "Bearer " + token;
-      } else {
-        const key = $("apiKeyInput").value.trim();
-        if (key) headers["Authorization"] = "Bearer " + key;
+        return headers;
       }
+
+      // API key → X-API-Key (never Authorization)
+      const key = ($("apiKeyInput")?.value || "").trim();
+      if (key) {
+        headers["X-API-Key"] = key;
+      }
+
       return headers;
     }
 
