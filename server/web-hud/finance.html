@@ -663,20 +663,25 @@
     function buildHeaders(json = true) {
       const headers = {};
 
+      // Only set Content-Type when we're actually sending JSON.
+      // (Do NOT set Content-Type for FormData uploads.)
       if (json) {
         headers["Content-Type"] = "application/json";
       }
 
-      // JWT from HUD login
+      // JWT from HUD login (support both legacy + current keys)
       let token = null;
       try {
-        token = localStorage.getItem("saraToken");
+        token =
+          localStorage.getItem("saraToken") ||
+          localStorage.getItem("sara_token") ||
+          localStorage.getItem("token");
       } catch (e) {
         // ignore localStorage issues
       }
 
       // Optional API key (sent as X-API-Key, never as Authorization)
-      const key = apiKeyInput.value.trim();
+      const key = (apiKeyInput && apiKeyInput.value ? apiKeyInput.value : "").trim();
 
       if (token) {
         headers["Authorization"] = "Bearer " + token;
@@ -692,6 +697,23 @@
     function setLogStatus(text, isError = false) {
       logStatus.classList.toggle("error", isError);
       logStatus.querySelector("span").textContent = text;
+    }
+
+    async function checkAuth() {
+      try {
+        const res = await fetch("/api/auth/me", { headers: buildHeaders(false) });
+        if (!res.ok) {
+          setLogStatus("Not logged in (401)", true);
+          return null;
+        }
+        const me = await res.json();
+        setLogStatus(`Logged in as ${me.email || "user"}`);
+        return me;
+      } catch (err) {
+        console.error(err);
+        setLogStatus("Auth check failed", true);
+        return null;
+      }
     }
 
     async function fetchSummary() {
@@ -1037,6 +1059,7 @@
 
     // API key change → refetch with new auth
     apiKeyInput.addEventListener("change", () => {
+      checkAuth();
       fetchSummary();
       fetchMonthSummary();
     });
@@ -1065,7 +1088,10 @@
     });
 
     // Initial load
-    fetchSummary();
+    (async () => {
+      await checkAuth();
+      await fetchSummary();
+    })();
   </script>
 </body>
 </html>
