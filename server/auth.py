@@ -25,8 +25,8 @@ elif os.path.exists(_render_db):
 else:
     DB_PATH = "sara.db"
 
- # IMPORTANT: never silently fall back to a default secret in production.
- # If different instances boot with different secrets, /login will issue tokens that /me can't verify.
+# IMPORTANT: never silently fall back to a default secret in production.
+# If different instances boot with different secrets, /login will issue tokens that /me can't verify.
 SECRET_KEY = os.environ.get("SARA_SECRET_KEY") or os.environ.get("SECRET_KEY")
 if not SECRET_KEY:
     raise RuntimeError(
@@ -35,9 +35,11 @@ if not SECRET_KEY:
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
+
 def _secret_fingerprint() -> str:
     # short fingerprint so we can confirm which secret an instance is using
     return hashlib.sha256(SECRET_KEY.encode()).hexdigest()[:12]
+
 
 def _auth_debug_headers(fail: Optional[str] = None) -> dict:
     headers = {
@@ -150,9 +152,7 @@ def get_user_by_email(email: str) -> Optional[User]:
     return User(
         id=row["id"],
         email=row["email"],
-        created_at=datetime.fromisoformat(row["created_at"])
-        if isinstance(row["created_at"], str)
-        else row["created_at"],
+        created_at=datetime.fromisoformat(row["created_at"]) if isinstance(row["created_at"], str) else row["created_at"],
     )
 
 
@@ -176,9 +176,7 @@ def get_user_by_id(user_id: int) -> Optional[User]:
     return User(
         id=row["id"],
         email=row["email"],
-        created_at=datetime.fromisoformat(row["created_at"])
-        if isinstance(row["created_at"], str)
-        else row["created_at"],
+        created_at=datetime.fromisoformat(row["created_at"]) if isinstance(row["created_at"], str) else row["created_at"],
     )
 
 
@@ -191,13 +189,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         headers=_auth_debug_headers(),
     )
 
-    # Defensive: terminals / proxies can introduce stray whitespace/newlines.
-    # Stripping avoids signature-verify failures caused by invisible chars.
     token = token.strip()
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: int = payload.get("sub")
+        user_id = payload.get("sub")
         if user_id is None:
             seen_alg = ""
             try:
@@ -213,7 +209,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
                 headers=headers,
             )
     except JWTError as e:
-        # include the specific jose error class + what alg the token claims (unverified)
         seen_alg = ""
         try:
             seen_alg = jwt.get_unverified_header(token).get("alg", "")
@@ -230,7 +225,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             headers=headers,
         )
 
-    # If different processes point at different DB files, the user row may be missing.
     user = get_user_by_id(int(user_id))
     if user is None:
         raise HTTPException(
@@ -245,11 +239,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
 
 @router.post("/signup", response_model=Token)
 def signup(payload: UserCreate):
-    # basic: 8+ char password
     if len(payload.password) < 8:
-        raise HTTPException(
-            status_code=400, detail="Password must be at least 8 characters."
-        )
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
 
     existing = get_user_row_by_email(payload.email)
     if existing:
@@ -282,7 +273,6 @@ def login(payload: UserLogin, response: Response):
 
     access_token = create_access_token(data={"sub": row["id"]})
 
-    # Helpful debug headers (safe): confirm which instance/secret served this response
     response.headers["X-SARA-AUTH-HOST"] = socket.gethostname()
     response.headers["X-SARA-AUTH-FP"] = _secret_fingerprint()
     response.headers["X-SARA-AUTH-DB"] = DB_PATH
@@ -300,7 +290,6 @@ async def me(response: Response, user: User = Depends(get_current_user)):
 
 @router.get("/debug")
 def debug_auth():
-    # safe-ish debug: shows which env vars exist + a fingerprint, not the raw secret
     return {
         "has_SARA_SECRET_KEY": bool(os.environ.get("SARA_SECRET_KEY")),
         "has_SECRET_KEY": bool(os.environ.get("SECRET_KEY")),
