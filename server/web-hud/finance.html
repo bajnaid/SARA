@@ -477,7 +477,7 @@
       <div class="header-right">
         <div class="api-input">
           <span>API key</span>
-          <input id="apiKeyInput" type="password" placeholder="Optional Bearer key" />
+          <input id="apiKeyInput" type="password" placeholder="Optional X-API-Key" />
         </div>
         <button class="link-btn" onclick="window.location.href='/hud'">Back to HUD</button>
       </div>
@@ -667,7 +667,7 @@
         headers["Content-Type"] = "application/json";
       }
 
-      // Prefer JWT token from HUD login, fall back to manual API key
+      // JWT from HUD login
       let token = null;
       try {
         token = localStorage.getItem("saraToken");
@@ -675,12 +675,15 @@
         // ignore localStorage issues
       }
 
+      // Optional API key (sent as X-API-Key, never as Authorization)
       const key = apiKeyInput.value.trim();
 
       if (token) {
         headers["Authorization"] = "Bearer " + token;
-      } else if (key) {
-        headers["Authorization"] = "Bearer " + key;
+      }
+
+      if (key) {
+        headers["X-API-Key"] = key;
       }
 
       return headers;
