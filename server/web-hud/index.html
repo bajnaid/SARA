@@ -644,13 +644,23 @@
       return headers;
     }
 
-    function authFetch(path, options = {}) {
+    async function authFetch(path, options = {}) {
       const opts = { ...options };
       const isFormData = opts.body instanceof FormData;
+
       // For JSON bodies or GETs, let buildHeaders set Content-Type; for FormData, skip json flag
-      const headers = buildHeaders(!isFormData);
-      opts.headers = { ...headers, ...(opts.headers || {}) };
-      return fetch(apiBase + path, opts);
+      const baseHeaders = buildHeaders(!isFormData);
+      opts.headers = { ...baseHeaders, ...(opts.headers || {}) };
+
+      const res = await fetch(apiBase + path, opts);
+
+      // If JWT expired/invalid, clear token so UI reflects reality
+      if (res.status === 401) {
+        setAuthToken(null);
+        setHudStatus("Auth expired. Please login again.");
+      }
+
+      return res;
     }
 
     function setHudStatus(text) {
@@ -1061,10 +1071,8 @@
         const form = new FormData();
         form.append("audio", blob, "mic.webm");
 
-        const headers = buildHeaders(false);
-        const res = await fetch(apiBase + "/api/stt", {
+        const res = await authFetch("/api/stt", {
           method: "POST",
-          headers,
           body: form,
         });
         const data = await res.json();
@@ -1174,10 +1182,13 @@
       try {
         const stored = getStoredToken();
         if (stored) {
-          authToken = stored;
+          setAuthToken(stored);
+        } else {
+          updateUserStatus();
         }
-      } catch {}
-      updateUserStatus();
+      } catch {
+        updateUserStatus();
+      }
       setHudStatus("Ready");
       setLastResult("_");
     })();
