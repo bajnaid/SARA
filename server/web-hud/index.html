@@ -26,7 +26,7 @@
     /* Aquire wordmark */
     @font-face {
       font-family: "Aquire";
-      src: url("/hud/assets/fonts/Aquire-BW0ox.otf") format("opentype");
+      src: url("assets/fonts/Aquire-BW0ox.otf") format("opentype");
       font-display: swap;
     }
 
@@ -566,18 +566,19 @@
 <body class="dark">
   <div id="onboardingOverlay" class="modal-overlay" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
-      <h2 id="onboardingTitle">Welcome to S.A.R.A. (MVP)</h2>
+      <h2 id="onboardingTitle">WELCOME TO S.A.R.A. (Smart Augmented Reality Assistant)</h2>
       <p>
-        This is an early build for creatives who want daily clarity without spreadsheets.
-        Use it for quick reflections, lightweight planning, and spending awareness.
+        This is an early build (MVP) for creatives who want a space to organize their thoughts and financials
+        without constantly switching through multiple applications. Use it for quick reflections, lightweight
+        planning, and to track your daily finances.
       </p>
       <ul>
-        <li><strong>Login</strong> with email + password to unlock your personal data.</li>
-        <li><strong>Ask S.A.R.A.</strong> a question or drop a reflection. Cmd/Ctrl + Enter sends.</li>
-        <li><strong>Finance</strong>: log spending in Finance (example: “$7 lunch, calm”).</li>
+        <li><strong>Login</strong> with the provided email + password to unlock your personal data.</li>
+        <li><strong>Ask S.A.R.A.</strong> a question or drop a reflection.</li>
+        <li><strong>Finance</strong>: log spending in Finance (example: “$7 for lunch at "X" — felt calm”).</li>
         <li><strong>Privacy</strong>: you control what you enter. No bank sync in this MVP.</li>
       </ul>
-      <p class="muted">Expect rough edges. If anything is confusing, tell Saif what broke or what you expected.</p>
+      <p class="muted">Expect rough edges. If anything is confusing, tell me what broke or what you expected or would like to see.</p>
       <div class="modal-actions">
         <button id="onboardingCloseBtn">OK, got it</button>
       </div>
@@ -635,7 +636,7 @@
 
         <div class="field-stack" style="margin-top:10px;">
           <label style="font-size:11px;color:var(--fg-muted);">
-            API key (optional)
+            API key (optional, advanced)
           </label>
           <input
             type="password"
@@ -645,41 +646,45 @@
           />
         </div>
 
-        <div class="field-stack" style="margin-top:10px;">
-          <label style="font-size:11px;color:var(--fg-muted);">
-            Login (email + password)
-          </label>
-          <input
-            type="text"
-            id="emailInput"
-            placeholder="Email (e.g. saif@example.com)"
-            style="min-height:auto;margin-bottom:6px;"
-          />
-          <input
-            type="password"
-            id="passwordInput"
-            placeholder="Password"
-            style="min-height:auto;margin-bottom:8px;"
-          />
-          <div class="row">
-            <button id="loginBtn" style="font-size:11px;padding:5px 10px;">
-              Login
-            </button>
-            <button id="logoutBtn" style="font-size:11px;padding:5px 10px;">
-              Logout
-            </button>
-          </div>
-        </div>
-
         <div class="footer-row">
           <span id="hudStatus">Idle</span>
-          <span id="userStatus">Auth: not logged in</span>
           <span id="convHint">Click a conversation or start a new one.</span>
         </div>
       </aside>
 
       <!-- RIGHT: Reflection + current tasks + voice -->
       <section class="panel">
+        <!-- Login card (first thing people see) -->
+        <div class="mini-card">
+          <div class="mini-row">
+            <div>
+              <div class="panel-title" style="margin:0;">Login</div>
+              <div class="panel-sub">Use the provided email + password</div>
+            </div>
+            <span id="userStatus" class="muted">Auth: not logged in</span>
+          </div>
+
+          <div class="row" style="width:100%;">
+            <input
+              type="text"
+              id="emailInput"
+              class="input-inline"
+              placeholder="Email (e.g. saif@example.com)"
+            />
+            <input
+              type="password"
+              id="passwordInput"
+              class="input-inline"
+              placeholder="Password"
+            />
+          </div>
+
+          <div class="row">
+            <button id="loginBtn" style="font-size:11px;padding:5px 10px;">Login</button>
+            <button id="logoutBtn" style="font-size:11px;padding:5px 10px;">Logout</button>
+            <span class="muted">Tip: you stay logged in on this device.</span>
+          </div>
+        </div>
         <!-- Reflection / chat -->
         <div class="field-stack">
           <label style="font-size:11px;color:var(--fg-muted);">
