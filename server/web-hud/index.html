@@ -681,6 +681,7 @@
 
           <div class="row">
             <button id="loginBtn" style="font-size:11px;padding:5px 10px;">Login</button>
+            <button id="signupBtn" style="font-size:11px;padding:5px 10px;">Create account</button>
             <button id="logoutBtn" style="font-size:11px;padding:5px 10px;">Logout</button>
             <span class="muted">Tip: you stay logged in on this device.</span>
           </div>
@@ -879,7 +880,7 @@
     }
 
     // --- Onboarding + local tasks + budget mini ---
-    const ONBOARD_KEY = "sara_onboarded_v1";
+    const ONBOARD_KEY = "sara_onboarded_v2";
     const LOCAL_TASKS_KEY = "sara_local_tasks_v1";
 
     function showOnboarding() {
@@ -1122,10 +1123,57 @@
         setAuthToken(data.access_token);
         setHudStatus("Logged in.");
         setLastResult("Logged in as " + email);
+
+        // refresh user-specific panels
+        await refreshConversations();
+        await loadCurrentCard();
+        await loadBudgetMini();
       } catch (e) {
         console.error(e);
         setHudStatus("Login error");
         setLastResult("Login error: " + e);
+      }
+    }
+
+    async function signup() {
+      const email = ($("emailInput").value || "").trim();
+      const password = $("passwordInput").value || "";
+      if (!email || !password) {
+        setHudStatus("Email and password required.");
+        return;
+      }
+
+      try {
+        setHudStatus("Creating account…");
+
+        const res = await fetch(apiBase + "/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || "signup failed");
+        }
+
+        const data = await res.json();
+        if (!data.access_token) {
+          throw new Error("No access_token in response");
+        }
+
+        setAuthToken(data.access_token);
+        setHudStatus("Account created. Logged in.");
+        setLastResult("Welcome — account created for " + email);
+
+        // refresh user-specific panels
+        await refreshConversations();
+        await loadCurrentCard();
+        await loadBudgetMini();
+      } catch (e) {
+        console.error(e);
+        setHudStatus("Signup error");
+        setLastResult("Signup error: " + e);
       }
     }
 
@@ -1505,6 +1553,7 @@
     };
 
     $("loginBtn").onclick = login;
+    $("signupBtn").onclick = signup;
     $("logoutBtn").onclick = logout;
 
     // Initial load
