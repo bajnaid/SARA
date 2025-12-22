@@ -23,6 +23,130 @@
         "Helvetica Neue", sans-serif;
     }
 
+    /* Aquire wordmark */
+    @font-face {
+      font-family: "Aquire";
+      src: url("/hud/assets/fonts/Aquire-BW0ox.otf") format("opentype");
+      font-display: swap;
+    }
+
+    .wordmark {
+      font-family: "Aquire", var(--font-sans);
+      letter-spacing: 0.08em;
+      font-size: 22px;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+
+    /* pill actions */
+    .pills {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .pill-action {
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--border-subtle);
+      background: rgba(10, 13, 26, 0.35);
+      padding: 7px 12px;
+      font-size: 12px;
+      color: var(--fg);
+      cursor: pointer;
+      transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      user-select: none;
+    }
+
+    body.light .pill-action {
+      background: rgba(255,255,255,0.75);
+      box-shadow: 0 10px 25px rgba(31, 41, 88, 0.12);
+    }
+
+    .pill-action:hover {
+      transform: translateY(-1px);
+      border-color: var(--accent);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+    }
+
+    /* mini cards */
+    .mini-card {
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-subtle);
+      background: rgba(6, 8, 18, 0.45);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    body.light .mini-card { background: rgba(255,255,255,0.85); }
+
+    .mini-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    .muted { color: var(--fg-muted); font-size: 12px; }
+
+    .input-inline {
+      width: 100%;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      background: rgba(4, 6, 18, 0.85);
+      color: var(--fg);
+      padding: 8px 9px;
+      font-size: 13px;
+      outline: none;
+      min-height: auto;
+    }
+    body.light .input-inline { background: rgba(255, 255, 255, 0.95); }
+
+    /* onboarding modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      z-index: 9999;
+    }
+    .modal-overlay.show { display: flex; }
+
+    .modal {
+      width: 100%;
+      max-width: 720px;
+      border-radius: 18px;
+      border: 1px solid var(--border-subtle);
+      background: radial-gradient(circle at top left, #1c2240 0, var(--bg-elevated) 55%);
+      box-shadow: 0 35px 90px rgba(0,0,0,0.6);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    body.light .modal {
+      background: linear-gradient(145deg, #ffffff 0, #f2f4ff 50%);
+      box-shadow: 0 35px 90px rgba(31,41,88,0.22);
+    }
+    .modal h2 { margin: 0; font-size: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .modal p { margin: 0; color: var(--fg-muted); font-size: 13px; line-height: 1.5; }
+    .modal ul { margin: 0; padding-left: 18px; color: var(--fg); font-size: 13px; line-height: 1.55; }
+    .modal .modal-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+
     * {
       box-sizing: border-box;
     }
@@ -440,23 +564,47 @@
   </style>
 </head>
 <body class="dark">
+  <div id="onboardingOverlay" class="modal-overlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
+      <h2 id="onboardingTitle">Welcome to S.A.R.A. (MVP)</h2>
+      <p>
+        This is an early build for creatives who want daily clarity without spreadsheets.
+        Use it for quick reflections, lightweight planning, and spending awareness.
+      </p>
+      <ul>
+        <li><strong>Login</strong> with email + password to unlock your personal data.</li>
+        <li><strong>Ask S.A.R.A.</strong> a question or drop a reflection. Cmd/Ctrl + Enter sends.</li>
+        <li><strong>Finance</strong>: log spending in Finance (example: “$7 lunch, calm”).</li>
+        <li><strong>Privacy</strong>: you control what you enter. No bank sync in this MVP.</li>
+      </ul>
+      <p class="muted">Expect rough edges. If anything is confusing, tell Saif what broke or what you expected.</p>
+      <div class="modal-actions">
+        <button id="onboardingCloseBtn">OK, got it</button>
+      </div>
+    </div>
+  </div>
   <div class="shell">
     <header class="topbar">
       <div class="identity">
-        <div class="logo-pill">S</div>
         <div class="identity-main">
-          <div class="identity-title">S.A.R.A. HUD</div>
-          <div class="identity-name">api.saralabs.xyz</div>
+          <div class="wordmark">S.A.R.A</div>
+          <div class="identity-title">api.saralabs.xyz</div>
         </div>
       </div>
+
       <div class="topbar-actions">
-        <label class="chip-toggle">
-          <input type="checkbox" id="autoSpeakToggle" checked />
-          <span>Auto speak</span>
-        </label>
-        <button id="toggleThemeBtn">Toggle Theme</button>
-        <button id="openDocsBtn">Open API docs</button>
-        <button id="openFinanceBtn">Finance</button>
+        <div class="pills">
+          <button class="pill-action" id="howToBtn">How to use</button>
+          <button class="pill-action" id="openDocsBtn">API docs</button>
+          <button class="pill-action" id="openFinanceBtn">Finance</button>
+
+          <label class="chip-toggle">
+            <input type="checkbox" id="autoSpeakToggle" checked />
+            <span>Auto speak</span>
+          </label>
+
+          <button id="toggleThemeBtn">Toggle Theme</button>
+        </div>
       </div>
     </header>
 
@@ -580,6 +728,40 @@
         </div>
         <div id="currentTasksCard" class="pre-block tasks-card">Loading…</div>
 
+        <div class="mini-card" style="margin-top:10px;">
+          <div class="mini-row">
+            <div>
+              <div class="panel-title" style="margin:0;">Your tasks</div>
+              <div class="panel-sub">Local list (add/remove). Doesn’t affect backend yet.</div>
+            </div>
+            <button id="clearLocalTasksBtn" style="font-size:11px;padding:5px 10px;">Clear</button>
+          </div>
+
+          <div class="row" style="width:100%;">
+            <input id="taskInput" class="input-inline" type="text" placeholder="Add a task (e.g., ‘Finish deck slide 6’)" />
+            <button id="addTaskBtn" style="white-space:nowrap;">Add</button>
+          </div>
+
+          <div id="localTasksList" class="pre-block tasks-card" style="margin:0;">Loading…</div>
+        </div>
+
+        <div class="mini-card" style="margin-top:10px;">
+          <div class="mini-row">
+            <div>
+              <div class="panel-title" style="margin:0;">Budget outlook</div>
+              <div class="panel-sub">Today’s spend (from your Finance logs)</div>
+            </div>
+            <button id="refreshBudgetBtn" style="font-size:11px;padding:5px 10px;">Refresh</button>
+          </div>
+          <div class="mini-row">
+            <div>
+              <div style="font-size:26px;font-weight:700;" id="budgetTodayValue">—</div>
+              <div class="muted" id="budgetTodayMeta">Log an expense to see this update.</div>
+            </div>
+            <button id="goFinanceBtn">Open Finance</button>
+          </div>
+        </div>
+
         <div class="footer-row">
           <span id="voiceStatus">Voice: idle</span>
           <span id="summaryHint">
@@ -689,6 +871,111 @@
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+    }
+
+    // --- Onboarding + local tasks + budget mini ---
+    const ONBOARD_KEY = "sara_onboarded_v1";
+    const LOCAL_TASKS_KEY = "sara_local_tasks_v1";
+
+    function showOnboarding() {
+      const overlay = $("onboardingOverlay");
+      if (!overlay) return;
+      overlay.classList.add("show");
+      overlay.setAttribute("aria-hidden", "false");
+    }
+    function hideOnboarding() {
+      const overlay = $("onboardingOverlay");
+      if (!overlay) return;
+      overlay.classList.remove("show");
+      overlay.setAttribute("aria-hidden", "true");
+    }
+    function hasOnboarded() {
+      try { return localStorage.getItem(ONBOARD_KEY) === "1"; } catch { return false; }
+    }
+    function setOnboarded() {
+      try { localStorage.setItem(ONBOARD_KEY, "1"); } catch {}
+    }
+
+    function readLocalTasks() {
+      try {
+        const raw = localStorage.getItem(LOCAL_TASKS_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    function writeLocalTasks(tasks) {
+      try { localStorage.setItem(LOCAL_TASKS_KEY, JSON.stringify(tasks || [])); } catch {}
+    }
+
+    function renderLocalTasks() {
+      const el = $("localTasksList");
+      if (!el) return;
+      const tasks = readLocalTasks();
+      if (!tasks.length) {
+        el.innerHTML = "<em>No tasks yet. Add one above.</em>";
+        return;
+      }
+      const items = tasks.map((t, idx) => {
+        const safe = escapeHtml(t);
+        return `<li style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <span>${safe}</span>
+          <button data-idx="${idx}" class="pill-action" style="padding:4px 10px;font-size:11px;">Remove</button>
+        </li>`;
+      }).join("");
+      el.innerHTML = `<ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;">${items}</ul>`;
+
+      el.querySelectorAll("button[data-idx]").forEach((btn) => {
+        btn.onclick = () => {
+          const i = parseInt(btn.getAttribute("data-idx"), 10);
+          const next = readLocalTasks().filter((_, j) => j !== i);
+          writeLocalTasks(next);
+          renderLocalTasks();
+        };
+      });
+    }
+
+    function addLocalTaskFromInput() {
+      const input = $("taskInput");
+      if (!input) return;
+      const text = (input.value || "").trim();
+      if (!text) return;
+      const tasks = readLocalTasks();
+      tasks.unshift(text);
+      writeLocalTasks(tasks.slice(0, 25));
+      input.value = "";
+      renderLocalTasks();
+    }
+    function clearLocalTasks() {
+      writeLocalTasks([]);
+      renderLocalTasks();
+    }
+
+    async function loadBudgetMini() {
+      const val = $("budgetTodayValue");
+      const meta = $("budgetTodayMeta");
+      if (!val || !meta) return;
+
+      try {
+        val.textContent = "…";
+        meta.textContent = "Fetching today’s logs…";
+
+        const res = await authFetch("/api/finance/today");
+        if (!res.ok) throw new Error(await res.text());
+
+        const items = await res.json();
+        const rows = Array.isArray(items) ? items : [];
+        const total = rows.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+        const currency = (rows[0] && rows[0].currency) ? rows[0].currency : "USD";
+        val.textContent = `${total.toFixed(2)} ${currency}`;
+        meta.textContent = rows.length ? `${rows.length} transaction(s) today.` : "No transactions today yet.";
+      } catch (e) {
+        val.textContent = "—";
+        meta.textContent = "Budget preview unavailable (are you logged in?).";
+        console.error(e);
+      }
     }
 
     function renderCurrentTasks(data) {
@@ -1130,6 +1417,42 @@
     $("openFinanceBtn").onclick = () => {
       window.open("/hud/finance.html", "_blank");
     };
+
+    // How-to + onboarding
+    const howToBtn = $("howToBtn");
+    if (howToBtn) howToBtn.onclick = () => showOnboarding();
+
+    const onboardingCloseBtn = $("onboardingCloseBtn");
+    if (onboardingCloseBtn) {
+      onboardingCloseBtn.onclick = () => {
+        setOnboarded();
+        hideOnboarding();
+      };
+    }
+
+    // Editable tasks
+    const addTaskBtn = $("addTaskBtn");
+    if (addTaskBtn) addTaskBtn.onclick = addLocalTaskFromInput;
+
+    const taskInput = $("taskInput");
+    if (taskInput) {
+      taskInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          addLocalTaskFromInput();
+        }
+      });
+    }
+
+    const clearLocalTasksBtn = $("clearLocalTasksBtn");
+    if (clearLocalTasksBtn) clearLocalTasksBtn.onclick = clearLocalTasks;
+
+    // Budget mini
+    const refreshBudgetBtn = $("refreshBudgetBtn");
+    if (refreshBudgetBtn) refreshBudgetBtn.onclick = loadBudgetMini;
+
+    const goFinanceBtn = $("goFinanceBtn");
+    if (goFinanceBtn) goFinanceBtn.onclick = () => window.open("/hud/finance.html", "_blank");
     $("refreshCardBtn").onclick = loadCurrentCard;
     $("saveReflectionBtn").onclick = saveReflection;
     $("askSaraBtn").onclick = () => {
@@ -1184,6 +1507,10 @@
       setHudStatus("Booting…");
       await loadCurrentCard();
       await refreshConversations();
+      renderLocalTasks();
+      await loadBudgetMini();
+
+      if (!hasOnboarded()) showOnboarding();
       try {
         const stored = getStoredToken();
         if (stored) {
