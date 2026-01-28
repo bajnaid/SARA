@@ -20,3 +20,6 @@ server/credentials.json
 server/token.json
 server/credentials.json
 .env
+
+# macOS
+.DS_Store
